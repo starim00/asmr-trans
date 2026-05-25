@@ -1,6 +1,16 @@
 # ASMR Trans
 
-Local desktop MVP for Japanese/Chinese audio transcription.
+Local desktop MVP for Japanese/Chinese audio/video transcription.
+
+## Batch Queue
+
+The desktop UI supports selecting multiple media files at once. Supported audio/video extensions:
+
+```text
+mp3, wav, m4a, flac, ogg, aac, mp4, mkv, mov, webm, avi, wmv
+```
+
+Files are processed sequentially with one local worker. Each queued item keeps its own progress, result, error state, and TXT export action.
 
 ## Run
 
@@ -11,6 +21,26 @@ npm run dev
 ```
 
 The first transcription downloads local models into the app model directory.
+
+## AI Translation
+
+Japanese audio can use an OpenAI-compatible chat completion API for translation. Configure it in the app sidebar:
+
+- Backend `Auto`: use AI when an API key is configured, otherwise use local NLLB.
+- Backend `AI`: try AI first and fall back to local NLLB if the request fails.
+- Backend `NLLB`: always use local NLLB.
+
+The DeepSeek V4 Pro preset uses:
+
+```text
+Base URL: https://api.deepseek.com
+Model: deepseek-v4-pro
+Temperature: 0.2
+Top P: 0.9
+Max Tokens: 4096
+```
+
+AI translation sends context windows of nearby Japanese segments and writes the translated text back to the original timed segments, so TXT export keeps the same format.
 
 ## Proxy
 

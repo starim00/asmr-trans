@@ -4,7 +4,10 @@ contextBridge.exposeInMainWorld("asmrTrans", {
   selectAudio: () => ipcRenderer.invoke("audio:select"),
   getModelStatus: () => ipcRenderer.invoke("models:status"),
   getHardwareStatus: () => ipcRenderer.invoke("hardware:status"),
+  getSettings: () => ipcRenderer.invoke("settings:get"),
+  updateSettings: (settings) => ipcRenderer.invoke("settings:update", settings),
   startTranscription: (payload) => ipcRenderer.invoke("transcribe:start", payload),
+  cancelTranscription: () => ipcRenderer.invoke("transcribe:cancel"),
   saveTxt: (payload) => ipcRenderer.invoke("export:txt", payload),
   onProgress: (callback) => {
     const listener = (_event, progress) => callback(progress);
@@ -20,5 +23,15 @@ contextBridge.exposeInMainWorld("asmrTrans", {
     const listener = (_event, error) => callback(error);
     ipcRenderer.on("transcribe:error", listener);
     return () => ipcRenderer.removeListener("transcribe:error", listener);
+  },
+  onCanceled: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("transcribe:canceled", listener);
+    return () => ipcRenderer.removeListener("transcribe:canceled", listener);
+  },
+  onDependencyProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("deps:progress", listener);
+    return () => ipcRenderer.removeListener("deps:progress", listener);
   },
 });

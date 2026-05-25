@@ -2,7 +2,9 @@ import argparse
 import ctypes.util
 import json
 import os
+import re
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -135,6 +137,24 @@ def get_torch_status():
     return torch_status
 
 
+def check_dependencies():
+    missing = []
+    modules = [
+        ("faster_whisper", "faster-whisper"),
+        ("transformers", "transformers"),
+        ("sentencepiece", "sentencepiece"),
+        ("requests", "requests"),
+        ("torch", "torch"),
+        ("ctranslate2", "ctranslate2"),
+    ]
+    for module_name, package_name in modules:
+        try:
+            __import__(module_name)
+        except Exception:
+            missing.append(package_name)
+    return missing
+
+
 def resolve_device(requested_device):
     requested = (requested_device or "auto").lower()
     torch_status = get_torch_status()
@@ -183,6 +203,198 @@ def ensure_nllb_model(nllb_dir):
         max_workers=1,
         resume_download=True,
     )
+
+
+def as_int(value, default):
+    try:
+        if value == "":
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def as_float(value, default):
+    try:
+        if value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def normalize_chat_completions_url(base_url):
+    base = (base_url or "").strip().rstrip("/")
+    if not base:
+        raise ValueError("AI translation baseUrl is empty.")
+    if base.endswith("/chat/completions"):
+        return base
+    if base.endswith("/v1"):
+        return f"{base}/chat/completions"
+    return f"{base}/chat/completions"
+
+
+def extract_json_array(content):
+    cleaned = (content or "").strip()
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", cleaned, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        cleaned = fenced.group(1).strip()
+    try:
+        value = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("[")
+        end = cleaned.rfind("]")
+        if start < 0 or end <= start:
+            raise
+        value = json.loads(cleaned[start : end + 1])
+    if isinstance(value, dict) and isinstance(value.get("translations"), list):
+        value = value["translations"]
+    if not isinstance(value, list):
+        raise ValueError("AI translation response is not a JSON array.")
+    return value
+
+
+def build_translation_windows(segments, window_size, overlap):
+    total = len(segments)
+    window_size = max(as_int(window_size, 6), 1)
+    overlap = max(as_int(overlap, 1), 0)
+    windows = []
+    for start in range(0, total, window_size):
+        end = min(start + window_size, total)
+        before_start = max(0, start - overlap)
+        after_end = min(total, end + overlap)
+        items = []
+        for index in range(start, end):
+            context_before = [
+                segments[context_index]["sourceText"]
+                for context_index in range(before_start, start)
+            ]
+            context_after = [
+                segments[context_index]["sourceText"]
+                for context_index in range(end, after_end)
+            ]
+            segment = segments[index]
+            items.append(
+                {
+                    "id": index,
+                    "start": segment["start"],
+                    "end": segment["end"],
+                    "text": segment["sourceText"],
+                    "contextBefore": context_before,
+                    "contextAfter": context_after,
+                }
+            )
+        windows.append(items)
+    return windows
+
+
+def build_ai_payload(config, window_items):
+    system_prompt = (config.get("systemPrompt") or "").strip()
+    user_prompt = (config.get("userPromptTemplate") or "").strip()
+    if not system_prompt:
+        system_prompt = "Translate Japanese transcription text into natural Simplified Chinese."
+    if not user_prompt:
+        user_prompt = "Translate the following JSON array. Return only a JSON array with id and translation."
+
+    payload = {
+        "model": (config.get("model") or "").strip(),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": f"{user_prompt}\n\nitems:\n{json.dumps(window_items, ensure_ascii=False)}",
+            },
+        ],
+        "stream": False,
+    }
+    if not payload["model"]:
+        raise ValueError("AI translation model is empty.")
+
+    optional_params = {
+        "temperature": as_float(config.get("temperature"), None),
+        "top_p": as_float(config.get("topP"), None),
+        "max_tokens": as_int(config.get("maxTokens"), None),
+    }
+    top_k = config.get("topK")
+    if top_k not in (None, ""):
+        optional_params["top_k"] = as_int(top_k, None)
+    reasoning_effort = (config.get("reasoningEffort") or "").strip()
+    if reasoning_effort:
+        optional_params["reasoning_effort"] = reasoning_effort
+    if config.get("thinking"):
+        optional_params["thinking"] = {"type": "enabled"}
+
+    for key, value in optional_params.items():
+        if value is not None and value != "":
+            payload[key] = value
+    return payload
+
+
+def request_ai_translation_window(config, window_items):
+    import requests
+
+    api_key = (config.get("apiKey") or "").strip()
+    if not api_key:
+        raise ValueError("AI translation API key is empty.")
+
+    url = normalize_chat_completions_url(config.get("baseUrl"))
+    payload = build_ai_payload(config, window_items)
+    timeout = max(as_int(config.get("timeoutSeconds"), 120), 10)
+    response = requests.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=timeout,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"AI translation request failed with HTTP {response.status_code}: {response.text[:500]}")
+    body = response.json()
+    content = body["choices"][0]["message"]["content"]
+    translated_items = extract_json_array(content)
+    translations = {}
+    for item in translated_items:
+        if isinstance(item, dict) and "id" in item and "translation" in item:
+            translations[int(item["id"])] = str(item["translation"]).strip()
+    missing = [item["id"] for item in window_items if int(item["id"]) not in translations]
+    if missing:
+        raise ValueError(f"AI translation response missed segment ids: {missing}")
+    return translations
+
+
+def translate_segments_with_ai(segments, config):
+    windows = build_translation_windows(
+        segments,
+        config.get("contextWindow", 6),
+        config.get("contextOverlap", 1),
+    )
+    retries = max(as_int(config.get("retries"), 2), 0)
+    translated = [{**segment, "translatedText": ""} for segment in segments]
+
+    for window_index, window_items in enumerate(windows):
+        total = max(len(windows), 1)
+        progress(
+            "translate",
+            f"Calling AI translation window {window_index + 1}/{total}...",
+            60 + int(((window_index + 1) / total) * 32),
+        )
+        last_error = None
+        for attempt in range(retries + 1):
+            try:
+                translations = request_ai_translation_window(config, window_items)
+                for segment_id, translation in translations.items():
+                    translated[segment_id]["translatedText"] = translation
+                break
+            except Exception as error:
+                last_error = error
+                if attempt < retries:
+                    time.sleep(min(2 ** attempt, 8))
+        else:
+            raise RuntimeError(f"AI translation failed: {last_error}") from last_error
+
+    return translated
 
 
 def translate_segments(segments, nllb_dir, device):
@@ -332,7 +544,24 @@ def transcribe(request):
     progress("transcribe", f"Transcription done. Detected language: {detected_language}", 52)
 
     if detected_language.startswith("ja"):
-        segments = translate_segments(segments, nllb_dir, device)
+        translation_backend = (request.get("translationBackend") or "auto").lower()
+        ai_config = request.get("aiTranslationConfig") or {}
+        should_try_ai = translation_backend == "ai" or (
+            translation_backend == "auto" and (ai_config.get("apiKey") or "").strip()
+        )
+        if should_try_ai:
+            try:
+                progress("translate", "Using AI translation with context windows...", 58)
+                segments = translate_segments_with_ai(segments, ai_config)
+            except Exception as error:
+                progress(
+                    "translate",
+                    f"AI translation failed, falling back to local NLLB: {error}",
+                    59,
+                )
+                segments = translate_segments(segments, nllb_dir, device)
+        else:
+            segments = translate_segments(segments, nllb_dir, device)
     elif detected_language.startswith("zh"):
         for segment in segments:
             segment["translatedText"] = None
@@ -352,12 +581,20 @@ def transcribe(request):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--check-deps", action="store_true")
     parser.add_argument("--hardware", action="store_true")
     parser.add_argument("--request-file")
     args = parser.parse_args()
 
     if args.check:
         print("Python worker OK")
+        return
+
+    if args.check_deps:
+        missing = check_dependencies()
+        print(json.dumps({"ok": len(missing) == 0, "missing": missing}, ensure_ascii=False))
+        if missing:
+            sys.exit(1)
         return
 
     if args.hardware:

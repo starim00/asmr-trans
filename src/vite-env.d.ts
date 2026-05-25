@@ -28,6 +28,32 @@ type HardwareStatus = {
 
 type ComputeDevice = "auto" | "cpu" | "cuda";
 type WhisperModelName = "tiny" | "base" | "small" | "medium" | "large-v3";
+type TranslationBackend = "auto" | "ai" | "nllb";
+
+type AiTranslationConfig = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  temperature: number;
+  topP: number;
+  topK?: number | string;
+  maxTokens: number;
+  timeoutSeconds: number;
+  retries: number;
+  reasoningEffort?: string;
+  thinking: boolean;
+  systemPrompt: string;
+  userPromptTemplate: string;
+  contextWindow: number;
+  contextOverlap: number;
+};
+
+type AppSettings = {
+  whisperModel: WhisperModelName;
+  computeDevice: ComputeDevice;
+  translationBackend: TranslationBackend;
+  aiTranslation: AiTranslationConfig;
+};
 
 type TranscriptionProgress = {
   stage: string;
@@ -48,6 +74,17 @@ type TranscriptionResult = {
   segments: TranscriptionSegment[];
 };
 
+type QueueTaskStatus = "queued" | "running" | "done" | "failed" | "canceled";
+
+type QueueTask = {
+  id: string;
+  file: AudioFile;
+  status: QueueTaskStatus;
+  progress?: TranscriptionProgress | null;
+  result?: TranscriptionResult | null;
+  error?: string | null;
+};
+
 type WorkerError = {
   message: string;
   traceback?: string;
@@ -55,13 +92,18 @@ type WorkerError = {
 
 interface Window {
   asmrTrans?: {
-    selectAudio: () => Promise<AudioFile | null>;
+    selectAudio: () => Promise<AudioFile[]>;
     getModelStatus: () => Promise<ModelStatus>;
     getHardwareStatus: () => Promise<HardwareStatus>;
+    getSettings: () => Promise<AppSettings>;
+    updateSettings: (settings: AppSettings) => Promise<AppSettings>;
+    cancelTranscription: () => Promise<{ canceled: boolean }>;
     startTranscription: (payload: {
       audioPath: string;
       whisperModel?: WhisperModelName;
       translationModel?: string;
+      translationBackend?: TranslationBackend;
+      aiTranslationConfig?: AiTranslationConfig;
       computeDevice?: ComputeDevice;
     }) => Promise<{ started: boolean }>;
     saveTxt: (payload: {
@@ -71,5 +113,7 @@ interface Window {
     onProgress: (callback: (progress: TranscriptionProgress) => void) => () => void;
     onDone: (callback: (result: TranscriptionResult) => void) => () => void;
     onError: (callback: (error: WorkerError) => void) => () => void;
+    onCanceled: (callback: (payload: { message?: string }) => void) => () => void;
+    onDependencyProgress: (callback: (progress: TranscriptionProgress) => void) => () => void;
   };
 }
