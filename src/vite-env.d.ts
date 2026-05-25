@@ -109,6 +109,7 @@ interface Window {
     saveTxt: (payload: {
       content: string;
       defaultFileName?: string;
+      defaultDirectory?: string;
     }) => Promise<{ saved: boolean; path?: string }>;
     onProgress: (callback: (progress: TranscriptionProgress) => void) => () => void;
     onDone: (callback: (result: TranscriptionResult) => void) => () => void;

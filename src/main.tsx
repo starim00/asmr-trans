@@ -531,6 +531,7 @@ function App() {
     const response = await desktopApi.saveTxt({
       content: txtContent,
       defaultFileName: `${baseName}.txt`,
+      defaultDirectory: selectedTask.file.path.replace(/[\\/][^\\/]*$/, ""),
     });
     if (response.saved && response.path) {
       setSavedPath(response.path);
@@ -629,7 +630,7 @@ function App() {
                   : selectedTask?.progress?.message || text.emptyResult}
               </p>
             </div>
-            <button className="secondaryButton" onClick={saveSelectedTxt} disabled={!selectedTask?.result || isQueueRunning}>
+            <button className="secondaryButton" onClick={saveSelectedTxt} disabled={!selectedTask?.result}>
               <Save size={18} />
               {text.saveTxt}
             </button>

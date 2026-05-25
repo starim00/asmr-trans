@@ -459,7 +459,7 @@ ipcMain.handle("transcribe:cancel", async (event) => {
   try {
     worker.kill();
   } catch (_error) {
-    event.sender.send("transcribe:canceled", { message: "任务已取消。" });
+    event.sender.send("transcribe:canceled", { message: "\u4efb\u52a1\u5df2\u53d6\u6d88\u3002" });
     activeWorker = null;
     activeWorkerCancelRequested = false;
   }
@@ -473,7 +473,10 @@ ipcMain.handle("export:txt", async (_event, payload) => {
 
   const result = await dialog.showSaveDialog(mainWindow, {
     title: "Save transcription result",
-    defaultPath: payload.defaultFileName || "transcription.txt",
+    defaultPath:
+      payload.defaultDirectory && payload.defaultFileName
+        ? path.join(payload.defaultDirectory, payload.defaultFileName)
+        : payload.defaultFileName || "transcription.txt",
     filters: [{ name: "Text", extensions: ["txt"] }],
   });
 
