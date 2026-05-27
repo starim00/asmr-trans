@@ -17,7 +17,7 @@ const DEFAULT_AI_USER_PROMPT_TEMPLATE =
 const DEFAULT_SETTINGS = {
   whisperModel: "small",
   computeDevice: "auto",
-  translationBackend: "auto",
+  translationBackend: "ai",
   aiTranslation: {
     baseUrl: "https://api.deepseek.com",
     apiKey: "",
@@ -46,7 +46,7 @@ function getSettingsPath() {
 }
 
 function mergeSettings(settings = {}) {
-  return {
+  const merged = {
     ...DEFAULT_SETTINGS,
     ...settings,
     aiTranslation: {
@@ -54,6 +54,8 @@ function mergeSettings(settings = {}) {
       ...(settings.aiTranslation || {}),
     },
   };
+  merged.translationBackend = "ai";
+  return merged;
 }
 
 function readSettings() {
@@ -295,7 +297,6 @@ ipcMain.handle("models:status", async () => {
   return {
     modelsDir,
     whisperDownloaded: hasModelFiles(path.join(modelsDir, "whisper")),
-    translationDownloaded: hasModelFiles(path.join(modelsDir, "nllb")),
   };
 });
 
@@ -309,7 +310,6 @@ ipcMain.handle("hardware:status", async () => {
 
   if (result.error) {
     return {
-      torchInstalled: false,
       cudaAvailable: false,
       cudaDeviceCount: 0,
       cudaDeviceName: null,
@@ -321,7 +321,6 @@ ipcMain.handle("hardware:status", async () => {
     return JSON.parse(result.stdout.trim());
   } catch (_error) {
     return {
-      torchInstalled: false,
       cudaAvailable: false,
       cudaDeviceCount: 0,
       cudaDeviceName: null,
@@ -367,8 +366,8 @@ ipcMain.handle("transcribe:start", async (event, payload) => {
   const request = {
     audioPath: payload.audioPath,
     whisperModel: payload.whisperModel || savedSettings.whisperModel || "small",
-    translationModel: payload.translationModel || "nllb-200-distilled-600M",
-    translationBackend: payload.translationBackend || savedSettings.translationBackend || "auto",
+    translationModel: "ai-chat-completions",
+    translationBackend: "ai",
     aiTranslationConfig,
     computeDevice: payload.computeDevice || savedSettings.computeDevice || "auto",
     outputLanguage: "zh",

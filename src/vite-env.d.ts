@@ -10,14 +10,9 @@ type AudioFile = {
 type ModelStatus = {
   modelsDir: string;
   whisperDownloaded: boolean;
-  translationDownloaded: boolean;
 };
 
 type HardwareStatus = {
-  torchInstalled: boolean;
-  torchVersion?: string | null;
-  torchCudaAvailable?: boolean;
-  torchCudaVersion?: string | null;
   ctranslate2CudaAvailable?: boolean;
   ctranslate2CudaDeviceCount?: number;
   cudaAvailable: boolean;
@@ -28,7 +23,7 @@ type HardwareStatus = {
 
 type ComputeDevice = "auto" | "cpu" | "cuda";
 type WhisperModelName = "tiny" | "base" | "small" | "medium" | "large-v3";
-type TranslationBackend = "auto" | "ai" | "nllb";
+type TranslationBackend = "ai";
 
 type AiTranslationConfig = {
   baseUrl: string;

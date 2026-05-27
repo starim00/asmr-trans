@@ -14,40 +14,11 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
-NLLB_MODEL_ID = "facebook/nllb-200-distilled-600M"
 JA_LANG = "jpn_Jpan"
-ZH_LANG = "zho_Hans"
-NLLB_ALLOW_PATTERNS = [
-    "config.json",
-    "generation_config.json",
-    "pytorch_model.bin",
-    "sentencepiece.bpe.model",
-    "special_tokens_map.json",
-    "tokenizer.json",
-    "tokenizer_config.json",
-]
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
 os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "120")
-
-
-def add_torch_dll_directory():
-    try:
-        import torch
-
-        torch_lib = Path(torch.__file__).resolve().parent / "lib"
-        if torch_lib.exists():
-            os.environ["PATH"] = f"{torch_lib}{os.pathsep}{os.environ.get('PATH', '')}"
-            if hasattr(os, "add_dll_directory"):
-                os.add_dll_directory(str(torch_lib))
-            return str(torch_lib)
-    except Exception:
-        return None
-    return None
-
-
-TORCH_DLL_DIR = add_torch_dll_directory()
 
 
 def find_dll(name):
@@ -68,7 +39,6 @@ def cuda_runtime_status():
         if directory and Path(directory).exists():
             cudnn_candidates.extend(str(path) for path in Path(directory).glob("cudnn64*.dll"))
     return {
-        "torchDllDir": TORCH_DLL_DIR,
         "cublas64_12": cublas,
         "cudnnDlls": cudnn_candidates[:5],
         "cudnnAvailable": len(cudnn_candidates) > 0,
@@ -97,30 +67,7 @@ def parse_request(request_file=None):
     return json.loads(raw)
 
 
-def get_torch_status():
-    try:
-        import torch
-
-        cuda_available = torch.cuda.is_available()
-        torch_status = {
-            "torchInstalled": True,
-            "torchVersion": torch.__version__,
-            "torchCudaAvailable": cuda_available,
-            "torchCudaVersion": torch.version.cuda,
-            "cudaDeviceCount": torch.cuda.device_count() if cuda_available else 0,
-            "cudaDeviceName": torch.cuda.get_device_name(0) if cuda_available else None,
-        }
-    except Exception as error:
-        torch_status = {
-            "torchInstalled": False,
-            "torchVersion": None,
-            "torchCudaAvailable": False,
-            "torchCudaVersion": None,
-            "cudaDeviceCount": 0,
-            "cudaDeviceName": None,
-            "error": str(error),
-        }
-
+def get_hardware_status():
     try:
         import ctranslate2
 
@@ -128,23 +75,21 @@ def get_torch_status():
     except Exception:
         ctranslate_cuda_count = 0
 
-    torch_status["ctranslate2CudaAvailable"] = ctranslate_cuda_count > 0
-    torch_status["ctranslate2CudaDeviceCount"] = ctranslate_cuda_count
-    torch_status["cudaRuntime"] = cuda_runtime_status()
-    torch_status["cudaAvailable"] = bool(
-        torch_status["torchCudaAvailable"] or torch_status["ctranslate2CudaAvailable"]
-    )
-    return torch_status
+    return {
+        "ctranslate2CudaAvailable": ctranslate_cuda_count > 0,
+        "ctranslate2CudaDeviceCount": ctranslate_cuda_count,
+        "cudaAvailable": ctranslate_cuda_count > 0,
+        "cudaDeviceCount": ctranslate_cuda_count,
+        "cudaDeviceName": "CUDA device" if ctranslate_cuda_count else None,
+        "cudaRuntime": cuda_runtime_status(),
+    }
 
 
 def check_dependencies():
     missing = []
     modules = [
         ("faster_whisper", "faster-whisper"),
-        ("transformers", "transformers"),
-        ("sentencepiece", "sentencepiece"),
         ("requests", "requests"),
-        ("torch", "torch"),
         ("ctranslate2", "ctranslate2"),
     ]
     for module_name, package_name in modules:
@@ -157,18 +102,18 @@ def check_dependencies():
 
 def resolve_device(requested_device):
     requested = (requested_device or "auto").lower()
-    torch_status = get_torch_status()
-    whisper_cuda_available = bool(torch_status.get("ctranslate2CudaAvailable"))
+    hardware_status = get_hardware_status()
+    whisper_cuda_available = bool(hardware_status.get("ctranslate2CudaAvailable"))
 
     if requested == "cuda":
         if not whisper_cuda_available:
             raise RuntimeError("GPU mode was requested, but CUDA is not available to faster-whisper.")
-        return "cuda", "float16", torch_status
+        return "cuda", "float16", hardware_status
 
     if requested == "auto" and whisper_cuda_available:
-        return "cuda", "float16", torch_status
+        return "cuda", "float16", hardware_status
 
-    return "cpu", "int8", torch_status
+    return "cpu", "int8", hardware_status
 
 
 def is_cuda_runtime_error(error):
@@ -181,28 +126,7 @@ def is_cuda_runtime_error(error):
 
 def model_dirs(models_dir):
     root = Path(models_dir)
-    return root / "whisper", root / "nllb"
-
-
-def local_nllb_dir(nllb_dir):
-    return Path(nllb_dir) / "facebook-nllb-200-distilled-600M-local"
-
-
-def ensure_nllb_model(nllb_dir):
-    from huggingface_hub import snapshot_download
-
-    local_dir = local_nllb_dir(nllb_dir)
-    if all((local_dir / name).exists() for name in NLLB_ALLOW_PATTERNS):
-        return str(local_dir)
-
-    progress("model", "Checking/downloading NLLB model files...", 55)
-    return snapshot_download(
-        repo_id=NLLB_MODEL_ID,
-        cache_dir=str(nllb_dir),
-        allow_patterns=NLLB_ALLOW_PATTERNS,
-        max_workers=1,
-        resume_download=True,
-    )
+    return root / "whisper"
 
 
 def as_int(value, default):
@@ -397,43 +321,6 @@ def translate_segments_with_ai(segments, config):
     return translated
 
 
-def translate_segments(segments, nllb_dir, device):
-    import torch
-    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-
-    translation_device = "cuda" if device == "cuda" and torch.cuda.is_available() else "cpu"
-    if device == "cuda" and translation_device == "cpu":
-        progress("hardware", "PyTorch is CPU-only; NLLB translation will run on CPU.", 54)
-
-    model_path = ensure_nllb_model(nllb_dir)
-    progress("model", f"Loading NLLB translation model on {translation_device}...", 56)
-    tokenizer = AutoTokenizer.from_pretrained(model_path, src_lang=JA_LANG, local_files_only=True)
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_path, local_files_only=True)
-    model.to(translation_device)
-    model.eval()
-    forced_bos_token_id = tokenizer.convert_tokens_to_ids(ZH_LANG)
-
-    translated = []
-    total = max(len(segments), 1)
-    for index, segment in enumerate(segments):
-        text = segment["sourceText"].strip()
-        translated_text = ""
-        if text:
-            inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512).to(model.device)
-            with torch.inference_mode():
-                generated_tokens = model.generate(
-                    **inputs,
-                    forced_bos_token_id=forced_bos_token_id,
-                    max_length=256,
-                    no_repeat_ngram_size=3,
-                    repetition_penalty=1.1,
-                )
-            translated_text = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0].strip()
-        translated.append({**segment, "translatedText": translated_text})
-        progress("translate", f"Translating segment {index + 1}/{total}...", 60 + int(((index + 1) / total) * 35))
-    return translated
-
-
 def transcribe(request):
     from faster_whisper import WhisperModel
 
@@ -443,15 +330,14 @@ def transcribe(request):
 
     whisper_model = request.get("whisperModel", "small")
     requested_device = request.get("computeDevice", "auto")
-    device, compute_type, torch_status = resolve_device(requested_device)
+    device, compute_type, hardware_status = resolve_device(requested_device)
     models_dir = request.get("modelsDir") or str(Path.home() / ".asmr-trans" / "models")
-    whisper_dir, nllb_dir = model_dirs(models_dir)
+    whisper_dir = model_dirs(models_dir)
     whisper_dir.mkdir(parents=True, exist_ok=True)
-    nllb_dir.mkdir(parents=True, exist_ok=True)
 
     progress("hardware", f"Using {device.upper()} compute ({compute_type}).", 3)
     if device == "cuda":
-        progress("hardware", f"GPU: {torch_status.get('cudaDeviceName') or 'CUDA device'}", 4)
+        progress("hardware", f"GPU: {hardware_status.get('cudaDeviceName') or 'CUDA device'}", 4)
 
     progress("model", f"Loading Whisper model: {whisper_model}", 5)
     try:
@@ -544,24 +430,11 @@ def transcribe(request):
     progress("transcribe", f"Transcription done. Detected language: {detected_language}", 52)
 
     if detected_language.startswith("ja"):
-        translation_backend = (request.get("translationBackend") or "auto").lower()
         ai_config = request.get("aiTranslationConfig") or {}
-        should_try_ai = translation_backend == "ai" or (
-            translation_backend == "auto" and (ai_config.get("apiKey") or "").strip()
-        )
-        if should_try_ai:
-            try:
-                progress("translate", "Using AI translation with context windows...", 58)
-                segments = translate_segments_with_ai(segments, ai_config)
-            except Exception as error:
-                progress(
-                    "translate",
-                    f"AI translation failed, falling back to local NLLB: {error}",
-                    59,
-                )
-                segments = translate_segments(segments, nllb_dir, device)
-        else:
-            segments = translate_segments(segments, nllb_dir, device)
+        if not (ai_config.get("apiKey") or "").strip():
+            raise RuntimeError("Japanese audio requires AI translation. Configure an AI API key first.")
+        progress("translate", "Using AI translation with context windows...", 58)
+        segments = translate_segments_with_ai(segments, ai_config)
     elif detected_language.startswith("zh"):
         for segment in segments:
             segment["translatedText"] = None
@@ -598,7 +471,7 @@ def main():
         return
 
     if args.hardware:
-        print(json.dumps(get_torch_status(), ensure_ascii=False))
+        print(json.dumps(get_hardware_status(), ensure_ascii=False))
         return
 
     try:

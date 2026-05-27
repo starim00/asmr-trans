@@ -27,7 +27,7 @@ const DEFAULT_AI_USER_PROMPT_TEMPLATE =
 const DEEPSEEK_PRESET: AppSettings = {
   whisperModel: DEFAULT_WHISPER_MODEL,
   computeDevice: "auto",
-  translationBackend: "auto",
+  translationBackend: "ai",
   aiTranslation: {
     baseUrl: "https://api.deepseek.com",
     apiKey: "",
@@ -85,7 +85,6 @@ const text = {
   modelChoice: "Whisper \u6a21\u578b",
   compute: "\u8ba1\u7b97\u8bbe\u5907",
   auto: "\u81ea\u52a8",
-  translationBackend: "\u7ffb\u8bd1\u540e\u7aef",
   aiTranslation: "AI \u7ffb\u8bd1",
   deepseekPreset: "DeepSeek V4 Pro \u9884\u8bbe",
   saveSettings: "\u4fdd\u5b58\u914d\u7f6e",
@@ -111,15 +110,11 @@ const text = {
   downloaded: "\u5df2\u4e0b\u8f7d",
   aiConfigured: "AI \u5df2\u914d\u7f6e",
   aiNotConfigured: "AI \u672a\u914d\u7f6e",
-  nllb: "NLLB \u65e5\u8bd1\u4e2d",
   modelDirFallback: "\u6a21\u578b\u76ee\u5f55\u5c06\u5728\u5e94\u7528\u542f\u52a8\u540e\u8bfb\u53d6\u3002",
   loadingHardware: "\u6b63\u5728\u68c0\u6d4b\u786c\u4ef6\u72b6\u6001...",
   whisperGpuAvailable: "Whisper GPU \u53ef\u7528",
   whisperGpuUnavailable: "Whisper GPU \u4e0d\u53ef\u7528",
   cudaDevices: "\u4e2a CUDA \u8bbe\u5907",
-  torchGpuAvailable: "PyTorch GPU \u53ef\u7528",
-  torchGpuUnavailable: "PyTorch GPU \u4e0d\u53ef\u7528",
-  torchMissing: "\u672a\u68c0\u6d4b\u5230 torch",
 };
 
 const missingDesktopApi = {
@@ -129,11 +124,8 @@ const missingDesktopApi = {
   getModelStatus: async (): Promise<ModelStatus> => ({
     modelsDir: "Electron \u684c\u9762\u5ba2\u6237\u7aef\u542f\u52a8\u540e\u663e\u793a\u6a21\u578b\u76ee\u5f55",
     whisperDownloaded: false,
-    translationDownloaded: false,
   }),
   getHardwareStatus: async (): Promise<HardwareStatus> => ({
-    torchInstalled: false,
-    torchCudaAvailable: false,
     ctranslate2CudaAvailable: false,
     cudaAvailable: false,
     cudaDeviceCount: 0,
@@ -194,14 +186,11 @@ function hardwareSummary(status: HardwareStatus | null) {
   const whisperGpu = status.ctranslate2CudaAvailable
     ? `${text.whisperGpuAvailable} (${status.ctranslate2CudaDeviceCount || 1} ${text.cudaDevices})`
     : text.whisperGpuUnavailable;
-  const torchGpu = status.torchCudaAvailable
-    ? `${text.torchGpuAvailable} (${status.cudaDeviceName || "CUDA"})`
-    : `${text.torchGpuUnavailable}\uff0c\u5f53\u524d ${status.torchVersion || text.torchMissing}`;
-  return `${whisperGpu}\n${torchGpu}`;
+  return whisperGpu;
 }
 
 function mergeSettings(settings?: Partial<AppSettings> | null): AppSettings {
-  return {
+  const merged = {
     ...DEEPSEEK_PRESET,
     ...(settings || {}),
     aiTranslation: {
@@ -209,6 +198,8 @@ function mergeSettings(settings?: Partial<AppSettings> | null): AppSettings {
       ...(settings?.aiTranslation || {}),
     },
   };
+  merged.translationBackend = "ai";
+  return merged;
 }
 
 function parseNumericInput(value: string, fallback: number) {
@@ -402,9 +393,8 @@ function App() {
       await desktopApi.startTranscription({
         audioPath: task.file.path,
         whisperModel: whisperModelRef.current,
-        translationModel:
-          settingsRef.current.translationBackend === "ai" ? "ai-chat-completions" : "nllb-200-distilled-600M",
-        translationBackend: settingsRef.current.translationBackend,
+        translationModel: "ai-chat-completions",
+        translationBackend: "ai",
         aiTranslationConfig: settingsRef.current.aiTranslation,
         computeDevice: computeDeviceRef.current,
       });
@@ -513,7 +503,7 @@ function App() {
     setSettings((current) => ({
       whisperModel,
       computeDevice,
-      translationBackend: "auto",
+      translationBackend: "ai",
       aiTranslation: {
         ...DEEPSEEK_PRESET.aiTranslation,
         apiKey: current.aiTranslation.apiKey,
@@ -538,7 +528,7 @@ function App() {
     }
   }
 
-  const queueSummary = `${whisperModel} / ${computeDevice.toUpperCase()} / ${settings.translationBackend.toUpperCase()} / ${
+  const queueSummary = `${whisperModel} / ${computeDevice.toUpperCase()} / AI / ${
     settings.aiTranslation.apiKey ? text.aiConfigured : text.aiNotConfigured
   }`;
 
@@ -696,10 +686,6 @@ function App() {
           void persistRuntimeSettings({ computeDevice: next });
         }}
         settings={settings}
-        setSettings={(next) => {
-          setSettings(next);
-          setSettingsSaved(false);
-        }}
         updateAiTranslation={updateAiTranslation}
         applyDeepSeekPreset={applyDeepSeekPreset}
         saveSettings={saveSettings}
@@ -720,7 +706,6 @@ function SettingsDrawer({
   computeDevice,
   setComputeDevice,
   settings,
-  setSettings,
   updateAiTranslation,
   applyDeepSeekPreset,
   saveSettings,
@@ -736,7 +721,6 @@ function SettingsDrawer({
   computeDevice: ComputeDevice;
   setComputeDevice: (device: ComputeDevice) => void;
   settings: AppSettings;
-  setSettings: (settings: AppSettings) => void;
   updateAiTranslation: (patch: Partial<AiTranslationConfig>) => void;
   applyDeepSeekPreset: () => void;
   saveSettings: () => void;
@@ -793,19 +777,7 @@ function SettingsDrawer({
             <h3>{text.aiTranslation}</h3>
             <SlidersHorizontal size={16} />
           </div>
-          <label className="field">
-            <span>{text.translationBackend}</span>
-            <select
-              className="modelSelect"
-              value={settings.translationBackend}
-              onChange={(event) => setSettings({ ...settings, translationBackend: event.target.value as TranslationBackend })}
-              disabled={isRunning}
-            >
-              <option value="auto">{text.auto}</option>
-              <option value="ai">AI</option>
-              <option value="nllb">NLLB</option>
-            </select>
-          </label>
+          <p className="hint">日语翻译仅使用 AI 接口；未配置 API Key 时日语任务会失败并提示配置。</p>
           <button className="secondaryButton compactButton" onClick={applyDeepSeekPreset} disabled={isRunning}>
             {text.deepseekPreset}
           </button>
@@ -859,7 +831,6 @@ function SettingsDrawer({
         <div className="statusBlock">
           <h3>{text.models}</h3>
           <StatusRow label={`Whisper ${whisperModel}`} ready={Boolean(modelStatus?.whisperDownloaded)} />
-          <StatusRow label={text.nllb} ready={Boolean(modelStatus?.translationDownloaded)} />
           <StatusRow
             label={settings.aiTranslation.model || "AI"}
             ready={Boolean(settings.aiTranslation.apiKey)}

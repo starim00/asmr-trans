@@ -20,15 +20,11 @@ py -3 -m pip install -r python/requirements.txt
 npm run dev
 ```
 
-The first transcription downloads local models into the app model directory.
+The first transcription downloads the Whisper model into the app model directory.
 
 ## AI Translation
 
-Japanese audio can use an OpenAI-compatible chat completion API for translation. Configure it in the app sidebar:
-
-- Backend `Auto`: use AI when an API key is configured, otherwise use local NLLB.
-- Backend `AI`: try AI first and fall back to local NLLB if the request fails.
-- Backend `NLLB`: always use local NLLB.
+Japanese audio translation now uses only an OpenAI-compatible chat completion API. Configure Base URL, API Key, model name, sampling parameters, context window, and prompts in the settings drawer. If Japanese audio is detected and no API Key is configured, the task fails with a clear configuration error instead of falling back to a local translation model.
 
 The DeepSeek V4 Pro preset uses:
 
@@ -40,7 +36,7 @@ Top P: 0.9
 Max Tokens: 4096
 ```
 
-AI translation sends context windows of nearby Japanese segments and writes the translated text back to the original timed segments, so TXT export keeps the same format.
+AI translation sends context windows of nearby Japanese segments and writes the translated text back to the original timed segments, so TXT export keeps the same format. Chinese audio is transcribed directly and does not call the AI translation API.
 
 ## Proxy
 
@@ -52,68 +48,28 @@ py -3 -m pip install -r python/requirements.txt
 
 ## GPU Notes
 
-The app has `Auto / CPU / CUDA` compute modes.
+The app has `Auto / CPU / CUDA` compute modes for Whisper. CUDA mode uses `faster-whisper` / `ctranslate2`; PyTorch is no longer required because local NLLB translation has been removed.
 
-- Whisper uses `faster-whisper` / `ctranslate2`; on this machine it can detect the RTX 3080 even when PyTorch is CPU-only.
-- NLLB translation uses PyTorch. Because current `transformers` requires `torch >= 2.6` for safe model loading, do not install torch 2.4.x.
-
-Default CPU install:
+Install dependencies:
 
 ```powershell
 py -3 -m pip install -r python/requirements.txt
 ```
 
-CUDA PyTorch install:
-
-```powershell
-py -3 -m pip uninstall -y torch
-py -3 -m pip install -r python/requirements-cuda.txt
-```
-
-Verify CUDA:
+Verify CUDA visibility:
 
 ```powershell
 py -3 python\worker.py --hardware
 ```
 
-Expected values on the target Windows machine include `torchVersion: 2.6.0+cu124`, `torchCudaAvailable: true`, `ctranslate2CudaAvailable: true`, and `cudaDeviceName: NVIDIA GeForce RTX 3080`.
+Expected CUDA-capable output includes `ctranslate2CudaAvailable: true` and a positive `ctranslate2CudaDeviceCount`. If CUDA mode reports missing DLLs, install NVIDIA CUDA 12 runtime/cuBLAS/cuDNN and ensure those DLL directories are in `PATH`.
 
-If pip is unstable for large wheels, download from the Aliyun mirror first:
+## Packaging
 
-```powershell
-New-Item -ItemType Directory -Force vendor | Out-Null
-curl.exe -L --noproxy "*" -C - `
-  -o "vendor\torch-2.6.0+cu124-cp310-cp310-win_amd64.whl" `
-  "https://mirrors.aliyun.com/pytorch-wheels/cu124/torch-2.6.0%2Bcu124-cp310-cp310-win_amd64.whl"
-py -3 -m pip install --no-index --no-cache-dir --no-deps "vendor\torch-2.6.0+cu124-cp310-cp310-win_amd64.whl"
-```
-
-For a quick safe fallback that fixes the `torch.load` CVE restriction but runs NLLB translation on CPU:
+The installer embeds the lightweight Python runtime under `runtime/python`. It does not embed Whisper models; models and Python packages are downloaded/installed on first run.
 
 ```powershell
-curl.exe -L --noproxy "*" `
-  -o "vendor\torch-2.6.0+cpu-cp310-cp310-win_amd64.whl" `
-  "https://mirrors.aliyun.com/pytorch-wheels/cpu/torch-2.6.0%2Bcpu-cp310-cp310-win_amd64.whl"
-py -3 -m pip install --no-index --no-cache-dir --no-deps "vendor\torch-2.6.0+cpu-cp310-cp310-win_amd64.whl"
+npm run dist
 ```
 
-## NLLB Model Download
-
-If Hugging Face model download stalls in the UI, use the resumable downloader. It downloads into the Electron model directory under `%APPDATA%\asmr-trans\models`.
-
-```powershell
-$env:HTTP_PROXY="http://127.0.0.1:7890"
-$env:HTTPS_PROXY="http://127.0.0.1:7890"
-powershell -ExecutionPolicy Bypass -File scripts\download-nllb.ps1
-```
-
-To use a mirror:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\download-nllb.ps1 `
-  -BaseUrl "https://hf-mirror.com/facebook/nllb-200-distilled-600M/resolve/main"
-```
-
-## Audio Formats
-
-Supported input extensions: `mp3`, `wav`, `m4a`, `flac`, `ogg`, `aac`.
+The Windows installer is written to `release/`.
