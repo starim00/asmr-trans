@@ -4,13 +4,13 @@ Local desktop MVP for Japanese/Chinese audio/video transcription.
 
 ## Batch Queue
 
-The desktop UI supports selecting multiple media files at once. Supported audio/video extensions:
+The desktop UI supports selecting multiple media files at once. Video files are decoded through their audio track. Supported audio/video extensions:
 
 ```text
 mp3, wav, m4a, flac, ogg, aac, mp4, mkv, mov, webm, avi, wmv
 ```
 
-Files are processed sequentially with one local worker. Each queued item keeps its own progress, result, error state, and TXT export action.
+Files are processed sequentially with one local worker. Each queued item keeps its own progress, result, error state, and TXT export action. Video files without a readable audio track fail with an explicit error.
 
 ## Run
 

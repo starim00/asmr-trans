@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Download,
   FileAudio,
+  FileVideo,
   FolderOpen,
   Loader2,
   Pause,
@@ -54,6 +55,8 @@ const WHISPER_MODELS: Array<{ value: WhisperModelName; label: string; descriptio
   { value: "medium", label: "Medium", description: "\u66f4\u9ad8\u51c6\u786e\u7387" },
   { value: "large-v3", label: "Large v3", description: "\u6700\u9ad8\u51c6\u786e\u7387\uff0c\u8d44\u6e90\u5360\u7528\u9ad8" },
 ];
+
+const VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "webm", "avi", "wmv"]);
 
 const text = {
   appSubtitle: "\u672c\u5730\u684c\u9762\u6279\u91cf\u8f6c\u5199",
@@ -209,6 +212,10 @@ function parseNumericInput(value: string, fallback: number) {
 
 function statusLabel(status: QueueTaskStatus) {
   return text[status];
+}
+
+function MediaIcon({ extension }: { extension: string }) {
+  return VIDEO_EXTENSIONS.has(extension.toLowerCase()) ? <FileVideo size={20} /> : <FileAudio size={20} />;
 }
 
 function createTask(file: AudioFile): QueueTask {
@@ -590,7 +597,7 @@ function App() {
                 className={`taskItem ${selectedTask?.id === task.id ? "selected" : ""}`}
                 onClick={() => setSelectedTaskId(task.id)}
               >
-                <FileAudio size={20} />
+                <MediaIcon extension={task.file.extension} />
                 <div className="taskMeta">
                   <strong>{task.file.name}</strong>
                   <span>

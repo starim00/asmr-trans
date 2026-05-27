@@ -15,6 +15,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
 JA_LANG = "jpn_Jpan"
+VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".webm", ".avi", ".wmv"}
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
@@ -89,6 +90,7 @@ def check_dependencies():
     missing = []
     modules = [
         ("faster_whisper", "faster-whisper"),
+        ("av", "av"),
         ("requests", "requests"),
         ("ctranslate2", "ctranslate2"),
     ]
@@ -127,6 +129,27 @@ def is_cuda_runtime_error(error):
 def model_dirs(models_dir):
     root = Path(models_dir)
     return root / "whisper"
+
+
+def ensure_media_has_audio_stream(media_path):
+    import av
+
+    path = Path(media_path)
+    try:
+        with av.open(str(path), mode="r") as container:
+            audio_streams = [stream for stream in container.streams if stream.type == "audio"]
+    except av.FFmpegError as error:
+        raise RuntimeError(
+            f"Unable to open media file for audio decoding: {path.name}. "
+            "The file may be corrupted, encrypted, or encoded with an unsupported codec."
+        ) from error
+
+    if not audio_streams:
+        if path.suffix.lower() in VIDEO_EXTENSIONS:
+            raise RuntimeError(f"Video file has no audio track: {path.name}")
+        raise RuntimeError(f"Media file has no readable audio stream: {path.name}")
+
+    return len(audio_streams)
 
 
 def as_int(value, default):
@@ -327,6 +350,10 @@ def transcribe(request):
     audio_path = request["audioPath"]
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"Audio file does not exist: {audio_path}")
+
+    audio_stream_count = ensure_media_has_audio_stream(audio_path)
+    if Path(audio_path).suffix.lower() in VIDEO_EXTENSIONS:
+        progress("media", f"Video input detected; using {audio_stream_count} audio track(s).", 2)
 
     whisper_model = request.get("whisperModel", "small")
     requested_device = request.get("computeDevice", "auto")
