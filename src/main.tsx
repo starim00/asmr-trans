@@ -100,6 +100,7 @@ const text = {
   compute: "\u8ba1\u7b97\u8bbe\u5907",
   auto: "\u81ea\u52a8",
   aiTranslation: "AI \u7ffb\u8bd1",
+  aiOnlyHint: "\u65e5\u8bed\u7ffb\u8bd1\u4ec5\u4f7f\u7528 AI \u63a5\u53e3\uff1b\u672a\u914d\u7f6e API Key \u65f6\u65e5\u8bed\u4efb\u52a1\u4f1a\u5931\u8d25\u5e76\u63d0\u793a\u914d\u7f6e\u3002",
   deepseekPreset: "DeepSeek V4 Pro \u9884\u8bbe",
   saveSettings: "\u4fdd\u5b58\u914d\u7f6e",
   settingsSaved: "\u914d\u7f6e\u5df2\u4fdd\u5b58",
@@ -934,7 +935,7 @@ function SettingsDrawer({
             <h3>{text.aiTranslation}</h3>
             <SlidersHorizontal size={16} />
           </div>
-          <p className="hint">\u65e5\u8bed\u7ffb\u8bd1\u4ec5\u4f7f\u7528 AI \u63a5\u53e3\uff1b\u672a\u914d\u7f6e API Key \u65f6\u65e5\u8bed\u4efb\u52a1\u4f1a\u5931\u8d25\u5e76\u63d0\u793a\u914d\u7f6e\u3002</p>
+          <p className="hint">{text.aiOnlyHint}</p>
           <button className="secondaryButton compactButton" onClick={applyDeepSeekPreset} disabled={isRunning}>
             {text.deepseekPreset}
           </button>
