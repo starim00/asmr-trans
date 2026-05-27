@@ -132,13 +132,27 @@ def model_dirs(models_dir):
     return root / "whisper"
 
 
-def ensure_media_has_audio_stream(media_path):
+def media_seconds_label(seconds):
+    if not seconds or seconds <= 0:
+        return "unknown"
+    minutes = int(seconds // 60)
+    remaining = int(seconds % 60)
+    return f"{minutes:02d}:{remaining:02d}"
+
+
+def inspect_media_audio(media_path):
     import av
 
     path = Path(media_path)
     try:
         with av.open(str(path), mode="r") as container:
             audio_streams = [stream for stream in container.streams if stream.type == "audio"]
+            duration = 0.0
+            for stream in audio_streams:
+                if stream.duration and stream.time_base:
+                    duration = max(duration, float(stream.duration * stream.time_base))
+            if not duration and container.duration:
+                duration = float(container.duration) / 1_000_000
     except av.FFmpegError as error:
         raise RuntimeError(
             f"Unable to open media file for audio decoding: {path.name}. "
@@ -150,7 +164,7 @@ def ensure_media_has_audio_stream(media_path):
             raise RuntimeError(f"Video file has no audio track: {path.name}")
         raise RuntimeError(f"Media file has no readable audio stream: {path.name}")
 
-    return len(audio_streams)
+    return {"audioStreamCount": len(audio_streams), "duration": duration}
 
 
 def as_int(value, default):
@@ -368,9 +382,17 @@ def transcribe(request):
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"Audio file does not exist: {audio_path}")
 
-    audio_stream_count = ensure_media_has_audio_stream(audio_path)
+    media_info = inspect_media_audio(audio_path)
+    audio_stream_count = media_info["audioStreamCount"]
+    media_duration = media_info["duration"]
     if Path(audio_path).suffix.lower() in VIDEO_EXTENSIONS:
-        progress("media", f"Video input detected; using {audio_stream_count} audio track(s).", 2)
+        progress(
+            "media",
+            f"Video input detected; using {audio_stream_count} audio track(s), duration {media_seconds_label(media_duration)}.",
+            2,
+        )
+    elif media_duration:
+        progress("media", f"Audio duration: {media_seconds_label(media_duration)}.", 2)
 
     whisper_model = request.get("whisperModel", "small")
     requested_device = request.get("computeDevice", "auto")
@@ -455,6 +477,7 @@ def transcribe(request):
                 ) from error
             raise
 
+    transcription_duration = media_duration or float(getattr(info, "duration", 0) or 0)
     segments = []
     for index, segment in enumerate(raw_segments):
         text = segment.text.strip()
@@ -467,7 +490,15 @@ def transcribe(request):
                 "sourceText": text,
             }
         )
-        if index % 5 == 0:
+        if transcription_duration > 0:
+            segment_ratio = min(max(float(segment.end) / transcription_duration, 0), 1)
+            percent = min(51, 20 + int(segment_ratio * 31))
+            progress(
+                "transcribe",
+                f"Transcribed {media_seconds_label(segment.end)} / {media_seconds_label(transcription_duration)}.",
+                percent,
+            )
+        elif index % 5 == 0:
             progress("transcribe", f"Recognized {len(segments)} segments...", min(50, 25 + len(segments)))
 
     detected_language = getattr(info, "language", "unknown") or "unknown"
