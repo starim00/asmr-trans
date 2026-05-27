@@ -144,45 +144,68 @@ function checkPythonDependencies() {
   });
 }
 
-function ensurePythonDependencies() {
-  if (!app.isPackaged) {
-    return Promise.resolve();
+function getPipInstallAttempts(requirementsPath) {
+  const commonArgs = ["-m", "pip", "install", "--disable-pip-version-check", "-r", requirementsPath];
+  const attempts = [{ label: "默认 PyPI", args: commonArgs }];
+  const customIndex = (process.env.ASMR_TRANS_PIP_INDEX_URL || "").trim();
+  if (customIndex) {
+    attempts.unshift({
+      label: "自定义 Python 包源",
+      args: [
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--index-url",
+        customIndex,
+        "-r",
+        requirementsPath,
+      ],
+    });
   }
-  if (dependencyInstallPromise) {
-    return dependencyInstallPromise;
-  }
+  attempts.push(
+    {
+      label: "阿里云 PyPI 镜像",
+      args: [
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--index-url",
+        "https://mirrors.aliyun.com/pypi/simple/",
+        "--trusted-host",
+        "mirrors.aliyun.com",
+        "-r",
+        requirementsPath,
+      ],
+    },
+    {
+      label: "清华 PyPI 镜像",
+      args: [
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--index-url",
+        "https://pypi.tuna.tsinghua.edu.cn/simple/",
+        "--trusted-host",
+        "pypi.tuna.tsinghua.edu.cn",
+        "-r",
+        requirementsPath,
+      ],
+    },
+  );
+  return attempts;
+}
 
-  dependencyInstallPromise = new Promise((resolve, reject) => {
-    sendDependencyProgress("正在检查内置 Python 依赖...", 2);
-    const checkResult = checkPythonDependencies();
-    if (checkResult.status === 0) {
-      sendDependencyProgress("Python 依赖已就绪。", 100);
-      resolve();
-      return;
-    }
-
-    const packagedPython = getPackagedPythonExecutable();
-    if (!packagedPython) {
-      reject(new Error("安装版未找到内置 Python 运行时。"));
-      return;
-    }
-
-    const requirementsPath = getRequirementsPath();
-    if (!fs.existsSync(requirementsPath)) {
-      reject(new Error(`未找到 Python 依赖文件：${requirementsPath}`));
-      return;
-    }
-
-    sendDependencyProgress("首次启动正在安装 Python 依赖，可能需要较长时间...", 5);
-    const installer = spawn(
-      packagedPython,
-      ["-m", "pip", "install", "-r", requirementsPath],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-        env: getWorkerEnv(),
-      },
-    );
+function runPipInstallAttempt(packagedPython, attempt, attemptIndex, attemptCount) {
+  return new Promise((resolve, reject) => {
+    sendDependencyProgress(`正在安装 Python 依赖（${attempt.label}，${attemptIndex + 1}/${attemptCount}）...`, 5);
+    const installer = spawn(packagedPython, attempt.args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      env: getWorkerEnv(),
+    });
 
     let output = "";
     installer.stdout.setEncoding("utf8");
@@ -191,21 +214,69 @@ function ensurePythonDependencies() {
       output += chunk;
       const lastLine = output.split(/\r?\n/).filter(Boolean).pop();
       if (lastLine) {
-        sendDependencyProgress(`正在安装 Python 依赖：${lastLine.slice(0, 160)}`, 20);
+        sendDependencyProgress(`正在安装 Python 依赖（${attempt.label}）：${lastLine.slice(0, 160)}`, 20);
       }
     };
     installer.stdout.on("data", onData);
     installer.stderr.on("data", onData);
-    installer.on("error", (error) => reject(error));
+    installer.on("error", (error) => {
+      error.output = output;
+      reject(error);
+    });
     installer.on("close", (code) => {
       if (code === 0) {
-        sendDependencyProgress("Python 依赖安装完成。", 100);
-        resolve();
+        resolve(output);
         return;
       }
-      reject(new Error(`Python 依赖安装失败，退出码 ${code}。${output.slice(-1000)}`));
+      const error = new Error(`退出码 ${code}`);
+      error.output = output;
+      reject(error);
     });
-  }).finally(() => {
+  });
+}
+
+function ensurePythonDependencies() {
+  if (!app.isPackaged) {
+    return Promise.resolve();
+  }
+  if (dependencyInstallPromise) {
+    return dependencyInstallPromise;
+  }
+
+  dependencyInstallPromise = (async () => {
+    sendDependencyProgress("正在检查内置 Python 依赖...", 2);
+    const checkResult = checkPythonDependencies();
+    if (checkResult.status === 0) {
+      sendDependencyProgress("Python 依赖已就绪。", 100);
+      return;
+    }
+
+    const packagedPython = getPackagedPythonExecutable();
+    if (!packagedPython) {
+      throw new Error("安装版未找到内置 Python 运行时。");
+    }
+
+    const requirementsPath = getRequirementsPath();
+    if (!fs.existsSync(requirementsPath)) {
+      throw new Error(`未找到 Python 依赖文件：${requirementsPath}`);
+    }
+
+    const attempts = getPipInstallAttempts(requirementsPath);
+    let lastOutput = "";
+    for (let index = 0; index < attempts.length; index += 1) {
+      try {
+        await runPipInstallAttempt(packagedPython, attempts[index], index, attempts.length);
+        sendDependencyProgress("Python 依赖安装完成。", 100);
+        return;
+      } catch (error) {
+        lastOutput = error.output || error.message || "";
+        if (index < attempts.length - 1) {
+          sendDependencyProgress(`Python 依赖安装源失败，正在切换到下一个源：${attempts[index + 1].label}`, 12);
+        }
+      }
+    }
+    throw new Error(`Python 依赖安装失败。已尝试默认 PyPI 和镜像源。${lastOutput.slice(-1000)}`);
+  })().finally(() => {
     dependencyInstallPromise = null;
   });
 

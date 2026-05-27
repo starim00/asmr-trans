@@ -48,6 +48,12 @@ $env:HTTPS_PROXY="http://127.0.0.1:7890"
 py -3 -m pip install -r python/requirements.txt
 ```
 
+Packaged builds install Python dependencies on first launch. If the default PyPI connection fails, the app retries with Aliyun and Tsinghua PyPI mirrors. To force a specific package index, launch the app with:
+
+```powershell
+$env:ASMR_TRANS_PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/"
+```
+
 ## GPU Notes
 
 The app has `Auto / CPU / CUDA` compute modes for Whisper. CUDA mode uses `faster-whisper` / `ctranslate2`; PyTorch is no longer required because local NLLB translation has been removed.
