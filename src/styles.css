@@ -216,6 +216,14 @@ h3 {
   border-bottom: 1px solid rgba(46, 56, 52, 0.12);
 }
 
+.exportActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .panelHeader span {
   display: inline-grid;
   place-items: center;

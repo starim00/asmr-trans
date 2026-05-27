@@ -467,13 +467,16 @@ ipcMain.handle("export:txt", async (_event, payload) => {
     throw new Error("There is no transcription result to save.");
   }
 
+  const extension = (path.extname(payload.defaultFileName || "").slice(1).toLowerCase() || "txt").replace(/[^a-z0-9]/g, "");
+  const safeExtension = extension || "txt";
+  const filterName = safeExtension.toUpperCase();
   const result = await dialog.showSaveDialog(mainWindow, {
     title: "Save transcription result",
     defaultPath:
       payload.defaultDirectory && payload.defaultFileName
         ? path.join(payload.defaultDirectory, payload.defaultFileName)
         : payload.defaultFileName || "transcription.txt",
-    filters: [{ name: "Text", extensions: ["txt"] }],
+    filters: [{ name: filterName, extensions: [safeExtension] }],
   });
 
   if (result.canceled || !result.filePath) {

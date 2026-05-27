@@ -73,6 +73,7 @@ const text = {
   source: "\u539f\u6587",
   translation: "\u8bd1\u6587",
   saveTxt: "\u4fdd\u5b58\u4e3a txt",
+  saveSrt: "\u4fdd\u5b58\u4e3a srt",
   saved: "\u5df2\u4fdd\u5b58\uff1a",
   noResultToSave: "\u5f53\u524d\u4efb\u52a1\u6ca1\u6709\u53ef\u4fdd\u5b58\u7684\u7ed3\u679c\u3002",
   chooseFirst: "\u8bf7\u5148\u6dfb\u52a0\u6587\u4ef6\u3002",
@@ -171,6 +172,10 @@ function formatTimestamp(seconds: number) {
     .padStart(3, "0")}`;
 }
 
+function formatSrtTimestamp(seconds: number) {
+  return formatTimestamp(seconds).replace(".", ",");
+}
+
 function buildTxt(result: TranscriptionResult | null | undefined) {
   if (!result) return "";
   return result.segments
@@ -180,6 +185,18 @@ function buildTxt(result: TranscriptionResult | null | undefined) {
         return `${timeRange}\n${text.source}\uff1a${segment.sourceText}\n${text.translation}\uff1a${segment.translatedText}`;
       }
       return `${timeRange}\n${segment.sourceText}`;
+    })
+    .join("\n\n");
+}
+
+function buildSrt(result: TranscriptionResult | null | undefined) {
+  if (!result) return "";
+  return result.segments
+    .map((segment, index) => {
+      const subtitleText = segment.translatedText
+        ? `${segment.sourceText}\n${segment.translatedText}`
+        : segment.sourceText;
+      return `${index + 1}\n${formatSrtTimestamp(segment.start)} --> ${formatSrtTimestamp(segment.end)}\n${subtitleText}`;
     })
     .join("\n\n");
 }
@@ -272,6 +289,7 @@ function App() {
     [selectedTaskId, tasks],
   );
   const txtContent = useMemo(() => buildTxt(selectedTask?.result), [selectedTask]);
+  const srtContent = useMemo(() => buildSrt(selectedTask?.result), [selectedTask]);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -535,6 +553,22 @@ function App() {
     }
   }
 
+  async function saveSelectedSrt() {
+    if (!srtContent || !selectedTask) {
+      setError(text.noResultToSave);
+      return;
+    }
+    const baseName = selectedTask.file.name.replace(/\.[^.]+$/, "") || "transcription";
+    const response = await desktopApi.saveTxt({
+      content: srtContent,
+      defaultFileName: `${baseName}.srt`,
+      defaultDirectory: selectedTask.file.path.replace(/[\\/][^\\/]*$/, ""),
+    });
+    if (response.saved && response.path) {
+      setSavedPath(response.path);
+    }
+  }
+
   const queueSummary = `${whisperModel} / ${computeDevice.toUpperCase()} / AI / ${
     settings.aiTranslation.apiKey ? text.aiConfigured : text.aiNotConfigured
   }`;
@@ -627,10 +661,16 @@ function App() {
                   : selectedTask?.progress?.message || text.emptyResult}
               </p>
             </div>
-            <button className="secondaryButton" onClick={saveSelectedTxt} disabled={!selectedTask?.result}>
-              <Save size={18} />
-              {text.saveTxt}
-            </button>
+            <div className="exportActions">
+              <button className="secondaryButton" onClick={saveSelectedTxt} disabled={!selectedTask?.result}>
+                <Save size={18} />
+                {text.saveTxt}
+              </button>
+              <button className="secondaryButton" onClick={saveSelectedSrt} disabled={!selectedTask?.result}>
+                <Download size={18} />
+                {text.saveSrt}
+              </button>
+            </div>
           </div>
 
           <div className="segments">
