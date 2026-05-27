@@ -444,6 +444,21 @@ h3 {
   background: #ffffff;
 }
 
+.subBlock {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(46, 56, 52, 0.09);
+  border-radius: 8px;
+  background: #fbfaf5;
+}
+
+.subBlock h4 {
+  margin: 0;
+  color: #1f2f2b;
+  font-size: 13px;
+}
+
 .blockTitleRow {
   display: flex;
   align-items: center;

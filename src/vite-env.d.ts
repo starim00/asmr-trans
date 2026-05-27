@@ -41,6 +41,19 @@ type AiTranslationConfig = {
   userPromptTemplate: string;
   contextWindow: number;
   contextOverlap: number;
+  proxyEnabled: boolean;
+  proxyType: ProxyType;
+  proxyHost: string;
+  proxyPort: string;
+};
+
+type ProxyType = "http" | "socks5";
+
+type NetworkSettings = {
+  proxyEnabled: boolean;
+  proxyType: ProxyType;
+  proxyHost: string;
+  proxyPort: string;
 };
 
 type AppSettings = {
@@ -48,6 +61,7 @@ type AppSettings = {
   computeDevice: ComputeDevice;
   translationBackend: TranslationBackend;
   aiTranslation: AiTranslationConfig;
+  network: NetworkSettings;
 };
 
 type TranscriptionProgress = {
@@ -92,6 +106,7 @@ interface Window {
     getHardwareStatus: () => Promise<HardwareStatus>;
     getSettings: () => Promise<AppSettings>;
     updateSettings: (settings: AppSettings) => Promise<AppSettings>;
+    retryDependencies: () => Promise<{ ok: boolean }>;
     cancelTranscription: () => Promise<{ canceled: boolean }>;
     startTranscription: (payload: {
       audioPath: string;

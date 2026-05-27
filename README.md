@@ -40,7 +40,12 @@ AI translation sends context windows of nearby Japanese segments and writes the 
 
 ## Proxy
 
-The app does not inject a default proxy. It uses the network path available to the current Windows session. Configure a system proxy, TUN mode, VPN, or launch the app with proxy environment variables only when needed:
+The app does not inject a default proxy. It uses the network path available to the current Windows session. Configure a system proxy, TUN mode, VPN, or set an HTTP/SOCKS5 proxy in the app settings.
+
+There are two independent proxy settings:
+
+- Dependency/model proxy: applies to first-run Python dependency installation and Whisper model downloads.
+- AI translation proxy: applies only to AI translation requests. It is disabled by default because services such as DeepSeek may work better without a proxy.
 
 ```powershell
 $env:HTTP_PROXY="http://127.0.0.1:7890"
@@ -48,7 +53,7 @@ $env:HTTPS_PROXY="http://127.0.0.1:7890"
 py -3 -m pip install -r python/requirements.txt
 ```
 
-Packaged builds install Python dependencies on first launch. If the default PyPI connection fails, the app retries with Aliyun and Tsinghua PyPI mirrors. To force a specific package index, launch the app with:
+Packaged builds install Python dependencies on first launch. If the default PyPI connection fails, the app retries with Aliyun and Tsinghua PyPI mirrors. The settings drawer also has a dependency-install retry button. To force a specific package index, launch the app with:
 
 ```powershell
 $env:ASMR_TRANS_PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/"

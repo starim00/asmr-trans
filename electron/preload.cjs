@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("asmrTrans", {
   getHardwareStatus: () => ipcRenderer.invoke("hardware:status"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (settings) => ipcRenderer.invoke("settings:update", settings),
+  retryDependencies: () => ipcRenderer.invoke("deps:retry"),
   startTranscription: (payload) => ipcRenderer.invoke("transcribe:start", payload),
   cancelTranscription: () => ipcRenderer.invoke("transcribe:cancel"),
   saveTxt: (payload) => ipcRenderer.invoke("export:txt", payload),

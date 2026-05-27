@@ -92,6 +92,7 @@ def check_dependencies():
         ("faster_whisper", "faster-whisper"),
         ("av", "av"),
         ("requests", "requests"),
+        ("socks", "PySocks"),
         ("ctranslate2", "ctranslate2"),
     ]
     for module_name, package_name in modules:
@@ -277,6 +278,17 @@ def build_ai_payload(config, window_items):
     return payload
 
 
+def build_ai_proxy_url(config):
+    if not config.get("proxyEnabled"):
+        return ""
+    host = str(config.get("proxyHost") or "").strip()
+    port = str(config.get("proxyPort") or "").strip()
+    proxy_type = "socks5" if config.get("proxyType") == "socks5" else "http"
+    if not host or not port:
+        return ""
+    return f"{proxy_type}://{host}:{port}"
+
+
 def request_ai_translation_window(config, window_items):
     import requests
 
@@ -287,7 +299,12 @@ def request_ai_translation_window(config, window_items):
     url = normalize_chat_completions_url(config.get("baseUrl"))
     payload = build_ai_payload(config, window_items)
     timeout = max(as_int(config.get("timeoutSeconds"), 120), 10)
-    response = requests.post(
+    session = requests.Session()
+    session.trust_env = False
+    proxy_url = build_ai_proxy_url(config)
+    if proxy_url:
+        session.proxies.update({"http": proxy_url, "https": proxy_url})
+    response = session.post(
         url,
         headers={
             "Authorization": f"Bearer {api_key}",

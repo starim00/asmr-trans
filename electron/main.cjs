@@ -10,9 +10,9 @@ let activeWorkerCancelRequested = false;
 let dependencyInstallPromise = null;
 
 const DEFAULT_AI_SYSTEM_PROMPT =
-  "你是专业的日译中翻译。请把日语 ASMR/口语转写翻译成自然、准确的简体中文。忠实保留原意、语气、称呼和暧昧表达；不要解释，不要总结，不要添加原文没有的信息。";
+  "\u4f60\u662f\u4e13\u4e1a\u7684\u65e5\u8bd1\u4e2d\u7ffb\u8bd1\u3002\u8bf7\u628a\u65e5\u8bed ASMR/\u53e3\u8bed\u8f6c\u5199\u7ffb\u8bd1\u6210\u81ea\u7136\u3001\u51c6\u786e\u7684\u7b80\u4f53\u4e2d\u6587\u3002\u5fe0\u5b9e\u4fdd\u7559\u539f\u610f\u3001\u8bed\u6c14\u3001\u79f0\u547c\u548c\u66a7\u6627\u8868\u8fbe\uff1b\u4e0d\u8981\u89e3\u91ca\uff0c\u4e0d\u8981\u603b\u7ed3\uff0c\u4e0d\u8981\u6dfb\u52a0\u539f\u6587\u6ca1\u6709\u7684\u4fe1\u606f\u3002";
 const DEFAULT_AI_USER_PROMPT_TEMPLATE =
-  "请翻译下面 JSON 数组中的 items。每项包含 id、start、end、text、contextBefore、contextAfter。context 字段只用于理解上下文，只翻译 text。只返回 JSON 数组，数组每项必须是 {\"id\": 数字, \"translation\": \"中文译文\"}，不要返回 Markdown。";
+  "\u8bf7\u7ffb\u8bd1\u4e0b\u9762 JSON \u6570\u7ec4\u4e2d\u7684 items\u3002\u6bcf\u9879\u5305\u542b id\u3001start\u3001end\u3001text\u3001contextBefore\u3001contextAfter\u3002context \u5b57\u6bb5\u53ea\u7528\u4e8e\u7406\u89e3\u4e0a\u4e0b\u6587\uff0c\u53ea\u7ffb\u8bd1 text\u3002\u53ea\u8fd4\u56de JSON \u6570\u7ec4\uff0c\u6570\u7ec4\u6bcf\u9879\u5fc5\u987b\u662f {\"id\": \u6570\u5b57, \"translation\": \"\u4e2d\u6587\u8bd1\u6587\"}\uff0c\u4e0d\u8981\u8fd4\u56de Markdown\u3002";
 
 const DEFAULT_SETTINGS = {
   whisperModel: "small",
@@ -34,6 +34,16 @@ const DEFAULT_SETTINGS = {
     userPromptTemplate: DEFAULT_AI_USER_PROMPT_TEMPLATE,
     contextWindow: 6,
     contextOverlap: 1,
+    proxyEnabled: false,
+    proxyType: "http",
+    proxyHost: "127.0.0.1",
+    proxyPort: "7890",
+  },
+  network: {
+    proxyEnabled: false,
+    proxyType: "http",
+    proxyHost: "127.0.0.1",
+    proxyPort: "7890",
   },
 };
 
@@ -52,6 +62,10 @@ function mergeSettings(settings = {}) {
     aiTranslation: {
       ...DEFAULT_SETTINGS.aiTranslation,
       ...(settings.aiTranslation || {}),
+    },
+    network: {
+      ...DEFAULT_SETTINGS.network,
+      ...(settings.network || {}),
     },
   };
   merged.translationBackend = "ai";
@@ -113,8 +127,22 @@ function getPythonCommand(extraArgs = []) {
   return { executable, args };
 }
 
+function getConfiguredProxyUrl() {
+  const network = readSettings().network || {};
+  if (!network.proxyEnabled) {
+    return "";
+  }
+  const host = String(network.proxyHost || "").trim();
+  const port = String(network.proxyPort || "").trim();
+  const type = network.proxyType === "socks5" ? "socks5" : "http";
+  if (!host || !port) {
+    return "";
+  }
+  return `${type}://${host}:${port}`;
+}
+
 function getWorkerEnv() {
-  return {
+  const env = {
     ...process.env,
     HF_HUB_ENABLE_HF_TRANSFER: process.env.HF_HUB_ENABLE_HF_TRANSFER || "0",
     HF_HUB_DISABLE_SYMLINKS_WARNING: process.env.HF_HUB_DISABLE_SYMLINKS_WARNING || "1",
@@ -123,6 +151,16 @@ function getWorkerEnv() {
     PYTHONIOENCODING: "utf-8",
     PYTHONUTF8: "1",
   };
+  const configuredProxy = getConfiguredProxyUrl();
+  if (configuredProxy) {
+    env.HTTP_PROXY = configuredProxy;
+    env.HTTPS_PROXY = configuredProxy;
+    env.ALL_PROXY = configuredProxy;
+    env.http_proxy = configuredProxy;
+    env.https_proxy = configuredProxy;
+    env.all_proxy = configuredProxy;
+  }
+  return env;
 }
 
 function sendDependencyProgress(message, percent = 0) {
@@ -146,11 +184,11 @@ function checkPythonDependencies() {
 
 function getPipInstallAttempts(requirementsPath) {
   const commonArgs = ["-m", "pip", "install", "--disable-pip-version-check", "-r", requirementsPath];
-  const attempts = [{ label: "默认 PyPI", args: commonArgs }];
+  const attempts = [{ label: "Default PyPI", args: commonArgs }];
   const customIndex = (process.env.ASMR_TRANS_PIP_INDEX_URL || "").trim();
   if (customIndex) {
     attempts.unshift({
-      label: "自定义 Python 包源",
+      label: "Custom Python package index",
       args: [
         "-m",
         "pip",
@@ -165,7 +203,7 @@ function getPipInstallAttempts(requirementsPath) {
   }
   attempts.push(
     {
-      label: "阿里云 PyPI 镜像",
+      label: "Aliyun PyPI mirror",
       args: [
         "-m",
         "pip",
@@ -180,7 +218,7 @@ function getPipInstallAttempts(requirementsPath) {
       ],
     },
     {
-      label: "清华 PyPI 镜像",
+      label: "Tsinghua PyPI mirror",
       args: [
         "-m",
         "pip",
@@ -200,7 +238,7 @@ function getPipInstallAttempts(requirementsPath) {
 
 function runPipInstallAttempt(packagedPython, attempt, attemptIndex, attemptCount) {
   return new Promise((resolve, reject) => {
-    sendDependencyProgress(`正在安装 Python 依赖（${attempt.label}，${attemptIndex + 1}/${attemptCount}）...`, 5);
+    sendDependencyProgress(`Installing Python dependencies (${attempt.label}, ${attemptIndex + 1}/${attemptCount})...`, 5);
     const installer = spawn(packagedPython, attempt.args, {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -214,7 +252,7 @@ function runPipInstallAttempt(packagedPython, attempt, attemptIndex, attemptCoun
       output += chunk;
       const lastLine = output.split(/\r?\n/).filter(Boolean).pop();
       if (lastLine) {
-        sendDependencyProgress(`正在安装 Python 依赖（${attempt.label}）：${lastLine.slice(0, 160)}`, 20);
+        sendDependencyProgress(`Installing Python dependencies (${attempt.label}): ${lastLine.slice(0, 160)}`, 20);
       }
     };
     installer.stdout.on("data", onData);
@@ -228,7 +266,7 @@ function runPipInstallAttempt(packagedPython, attempt, attemptIndex, attemptCoun
         resolve(output);
         return;
       }
-      const error = new Error(`退出码 ${code}`);
+      const error = new Error(`exit code ${code}`);
       error.output = output;
       reject(error);
     });
@@ -244,21 +282,21 @@ function ensurePythonDependencies() {
   }
 
   dependencyInstallPromise = (async () => {
-    sendDependencyProgress("正在检查内置 Python 依赖...", 2);
+    sendDependencyProgress("Checking bundled Python dependencies...", 2);
     const checkResult = checkPythonDependencies();
     if (checkResult.status === 0) {
-      sendDependencyProgress("Python 依赖已就绪。", 100);
+      sendDependencyProgress("Python dependencies are ready.", 100);
       return;
     }
 
     const packagedPython = getPackagedPythonExecutable();
     if (!packagedPython) {
-      throw new Error("安装版未找到内置 Python 运行时。");
+      throw new Error("Packaged Python runtime was not found.");
     }
 
     const requirementsPath = getRequirementsPath();
     if (!fs.existsSync(requirementsPath)) {
-      throw new Error(`未找到 Python 依赖文件：${requirementsPath}`);
+      throw new Error(`Python requirements file was not found: ${requirementsPath}`);
     }
 
     const attempts = getPipInstallAttempts(requirementsPath);
@@ -266,16 +304,16 @@ function ensurePythonDependencies() {
     for (let index = 0; index < attempts.length; index += 1) {
       try {
         await runPipInstallAttempt(packagedPython, attempts[index], index, attempts.length);
-        sendDependencyProgress("Python 依赖安装完成。", 100);
+        sendDependencyProgress("Python dependencies installed.", 100);
         return;
       } catch (error) {
         lastOutput = error.output || error.message || "";
         if (index < attempts.length - 1) {
-          sendDependencyProgress(`Python 依赖安装源失败，正在切换到下一个源：${attempts[index + 1].label}`, 12);
+          sendDependencyProgress(`Python dependency source failed, switching to: ${attempts[index + 1].label}`, 12);
         }
       }
     }
-    throw new Error(`Python 依赖安装失败。已尝试默认 PyPI 和镜像源。${lastOutput.slice(-1000)}`);
+    throw new Error(`Python dependency installation failed after trying PyPI and mirrors. ${lastOutput.slice(-1000)}`);
   })().finally(() => {
     dependencyInstallPromise = null;
   });
@@ -307,7 +345,7 @@ function createWindow() {
 
   mainWindow.webContents.once("did-finish-load", () => {
     ensurePythonDependencies().catch((error) => {
-      sendDependencyProgress(`Python 依赖安装失败：${error.message}`, 0);
+      sendDependencyProgress(`Python 濠电偞鎸荤喊宥囨崲閸℃瑧鐭夐柛鈩冪憿閸嬫捇鎮烽柇锔叫銈冨劚閿曘儱顕ラ崟顒佺秶妞ゆ劑鍎涢弴銏＄叆?{error.message}`, 0);
     });
   });
 }
@@ -403,6 +441,11 @@ ipcMain.handle("settings:get", async () => {
 
 ipcMain.handle("settings:update", async (_event, settings) => {
   return writeSettings(settings || {});
+});
+
+ipcMain.handle("deps:retry", async () => {
+  await ensurePythonDependencies();
+  return { ok: true };
 });
 
 ipcMain.handle("transcribe:start", async (event, payload) => {
@@ -502,7 +545,7 @@ ipcMain.handle("transcribe:start", async (event, payload) => {
 
   worker.on("close", (code) => {
     if (activeWorker === worker && activeWorkerCancelRequested) {
-      event.sender.send("transcribe:canceled", { message: "任务已取消。" });
+      event.sender.send("transcribe:canceled", { message: "\u4efb\u52a1\u5df2\u53d6\u6d88\u3002" });
     } else if (activeWorker === worker && code !== 0 && !workerReportedError) {
       event.sender.send("transcribe:error", {
         message: stderr.trim() || `Python worker exited with code ${code}`,

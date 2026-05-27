@@ -45,6 +45,16 @@ const DEEPSEEK_PRESET: AppSettings = {
     userPromptTemplate: DEFAULT_AI_USER_PROMPT_TEMPLATE,
     contextWindow: 6,
     contextOverlap: 1,
+    proxyEnabled: false,
+    proxyType: "http",
+    proxyHost: "127.0.0.1",
+    proxyPort: "7890",
+  },
+  network: {
+    proxyEnabled: false,
+    proxyType: "http",
+    proxyHost: "127.0.0.1",
+    proxyPort: "7890",
   },
 };
 
@@ -109,6 +119,16 @@ const text = {
   userPrompt: "User Prompt",
   contextWindow: "\u4e0a\u4e0b\u6587\u7a97\u53e3",
   contextOverlap: "\u4e0a\u4e0b\u6587\u91cd\u53e0",
+  network: "\u4f9d\u8d56\u4e0e\u6a21\u578b\u4e0b\u8f7d\u4ee3\u7406",
+  aiProxy: "AI \u7ffb\u8bd1\u4ee3\u7406",
+  proxyEnabled: "\u542f\u7528\u4ee3\u7406",
+  proxyType: "\u4ee3\u7406\u7c7b\u578b",
+  proxyHost: "\u4ee3\u7406\u5730\u5740",
+  proxyPort: "\u7aef\u53e3",
+  proxyHint: "\u8fd9\u4e2a\u4ee3\u7406\u53ea\u7528\u4e8e Python \u4f9d\u8d56\u4e0b\u8f7d\u548c Whisper \u6a21\u578b\u4e0b\u8f7d\u3002",
+  aiProxyHint: "AI \u7ffb\u8bd1\u9ed8\u8ba4\u4e0d\u8d70\u4ee3\u7406\uff1b\u4ec5\u5728\u9700\u8981\u8bbf\u95ee\u7279\u5b9a API \u65f6\u5355\u72ec\u5f00\u542f\u3002",
+  retryDependencies: "\u91cd\u8bd5\u4f9d\u8d56\u5b89\u88c5",
+  retryingDependencies: "\u6b63\u5728\u91cd\u8bd5\u4f9d\u8d56\u5b89\u88c5...",
   models: "\u6a21\u578b\u72b6\u6001",
   firstUseDownload: "\u9996\u6b21\u4f7f\u7528\u4e0b\u8f7d",
   downloaded: "\u5df2\u4e0b\u8f7d",
@@ -137,6 +157,7 @@ const missingDesktopApi = {
   }),
   getSettings: async (): Promise<AppSettings> => DEEPSEEK_PRESET,
   updateSettings: async (settings: AppSettings): Promise<AppSettings> => settings,
+  retryDependencies: async () => ({ ok: false }),
   cancelTranscription: async () => ({ canceled: false }),
   startTranscription: async () => {
     throw new Error("\u8bf7\u5728 Electron \u684c\u9762\u5ba2\u6237\u7aef\u4e2d\u542f\u52a8\u8f6c\u5199\u3002");
@@ -216,6 +237,10 @@ function mergeSettings(settings?: Partial<AppSettings> | null): AppSettings {
     aiTranslation: {
       ...DEEPSEEK_PRESET.aiTranslation,
       ...(settings?.aiTranslation || {}),
+    },
+    network: {
+      ...DEEPSEEK_PRESET.network,
+      ...(settings?.network || {}),
     },
   };
   merged.translationBackend = "ai";
@@ -501,6 +526,31 @@ function App() {
     setSettingsSaved(false);
   }
 
+  function updateNetwork(patch: Partial<NetworkSettings>) {
+    setSettings((current) => ({
+      ...current,
+      network: {
+        ...current.network,
+        ...patch,
+      },
+    }));
+    setSettingsSaved(false);
+  }
+
+  async function retryDependencies() {
+    setError(null);
+    setGlobalProgress({ stage: "dependencies", message: text.retryingDependencies, percent: 1 });
+    try {
+      await desktopApi.updateSettings(mergeSettings({ ...settings, whisperModel, computeDevice }));
+      await desktopApi.retryDependencies();
+      setGlobalProgress({ stage: "dependencies", message: "\u0050ython \u4f9d\u8d56\u5df2\u5c31\u7eea\u3002", percent: 100 });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setGlobalProgress({ stage: "dependencies", message, percent: 0 });
+      setError(message);
+    }
+  }
+
   async function persistRuntimeSettings(patch: Partial<AppSettings>) {
     const nextSettings = mergeSettings({
       ...settings,
@@ -532,7 +582,12 @@ function App() {
       aiTranslation: {
         ...DEEPSEEK_PRESET.aiTranslation,
         apiKey: current.aiTranslation.apiKey,
+        proxyEnabled: current.aiTranslation.proxyEnabled,
+        proxyType: current.aiTranslation.proxyType,
+        proxyHost: current.aiTranslation.proxyHost,
+        proxyPort: current.aiTranslation.proxyPort,
       },
+      network: current.network,
     }));
     setSettingsSaved(false);
   }
@@ -734,8 +789,10 @@ function App() {
         }}
         settings={settings}
         updateAiTranslation={updateAiTranslation}
+        updateNetwork={updateNetwork}
         applyDeepSeekPreset={applyDeepSeekPreset}
         saveSettings={saveSettings}
+        retryDependencies={retryDependencies}
         settingsSaved={settingsSaved}
       />
     </main>
@@ -754,8 +811,10 @@ function SettingsDrawer({
   setComputeDevice,
   settings,
   updateAiTranslation,
+  updateNetwork,
   applyDeepSeekPreset,
   saveSettings,
+  retryDependencies,
   settingsSaved,
 }: {
   open: boolean;
@@ -769,8 +828,10 @@ function SettingsDrawer({
   setComputeDevice: (device: ComputeDevice) => void;
   settings: AppSettings;
   updateAiTranslation: (patch: Partial<AiTranslationConfig>) => void;
+  updateNetwork: (patch: Partial<NetworkSettings>) => void;
   applyDeepSeekPreset: () => void;
   saveSettings: () => void;
+  retryDependencies: () => void;
   settingsSaved: boolean;
 }) {
   return (
@@ -821,10 +882,59 @@ function SettingsDrawer({
 
         <div className="statusBlock">
           <div className="blockTitleRow">
+            <h3>{text.network}</h3>
+            <SlidersHorizontal size={16} />
+          </div>
+          <label className="toggleField">
+            <input
+              type="checkbox"
+              checked={settings.network.proxyEnabled}
+              onChange={(event) => updateNetwork({ proxyEnabled: event.target.checked })}
+              disabled={isRunning}
+            />
+            <span>{text.proxyEnabled}</span>
+          </label>
+          <div className="fieldGrid">
+            <label className="field">
+              <span>{text.proxyType}</span>
+              <select
+                className="modelSelect"
+                value={settings.network.proxyType}
+                onChange={(event) => updateNetwork({ proxyType: event.target.value as ProxyType })}
+                disabled={isRunning || !settings.network.proxyEnabled}
+              >
+                <option value="http">HTTP</option>
+                <option value="socks5">SOCKS5</option>
+              </select>
+            </label>
+            <TextField
+              label={text.proxyHost}
+              value={settings.network.proxyHost}
+              disabled={isRunning || !settings.network.proxyEnabled}
+              placeholder="127.0.0.1"
+              onChange={(proxyHost) => updateNetwork({ proxyHost })}
+            />
+            <TextField
+              label={text.proxyPort}
+              value={settings.network.proxyPort}
+              disabled={isRunning || !settings.network.proxyEnabled}
+              placeholder="7890"
+              onChange={(proxyPort) => updateNetwork({ proxyPort })}
+            />
+          </div>
+          <p className="hint">{text.proxyHint}</p>
+          <button className="secondaryButton compactButton" onClick={retryDependencies} disabled={isRunning}>
+            <RotateCcw size={16} />
+            {text.retryDependencies}
+          </button>
+        </div>
+
+        <div className="statusBlock">
+          <div className="blockTitleRow">
             <h3>{text.aiTranslation}</h3>
             <SlidersHorizontal size={16} />
           </div>
-          <p className="hint">日语翻译仅使用 AI 接口；未配置 API Key 时日语任务会失败并提示配置。</p>
+          <p className="hint">\u65e5\u8bed\u7ffb\u8bd1\u4ec5\u4f7f\u7528 AI \u63a5\u53e3\uff1b\u672a\u914d\u7f6e API Key \u65f6\u65e5\u8bed\u4efb\u52a1\u4f1a\u5931\u8d25\u5e76\u63d0\u793a\u914d\u7f6e\u3002</p>
           <button className="secondaryButton compactButton" onClick={applyDeepSeekPreset} disabled={isRunning}>
             {text.deepseekPreset}
           </button>
@@ -841,6 +951,47 @@ function SettingsDrawer({
             <NumberField label={text.contextWindow} value={settings.aiTranslation.contextWindow} disabled={isRunning} onChange={(contextWindow) => updateAiTranslation({ contextWindow })} />
             <NumberField label={text.contextOverlap} value={settings.aiTranslation.contextOverlap} disabled={isRunning} onChange={(contextOverlap) => updateAiTranslation({ contextOverlap })} />
             <TextField label={text.reasoningEffort} value={settings.aiTranslation.reasoningEffort || ""} disabled={isRunning} onChange={(reasoningEffort) => updateAiTranslation({ reasoningEffort })} />
+          </div>
+          <div className="subBlock">
+            <h4>{text.aiProxy}</h4>
+            <label className="toggleField">
+              <input
+                type="checkbox"
+                checked={settings.aiTranslation.proxyEnabled}
+                onChange={(event) => updateAiTranslation({ proxyEnabled: event.target.checked })}
+                disabled={isRunning}
+              />
+              <span>{text.proxyEnabled}</span>
+            </label>
+            <div className="fieldGrid">
+              <label className="field">
+                <span>{text.proxyType}</span>
+                <select
+                  className="modelSelect"
+                  value={settings.aiTranslation.proxyType}
+                  onChange={(event) => updateAiTranslation({ proxyType: event.target.value as ProxyType })}
+                  disabled={isRunning || !settings.aiTranslation.proxyEnabled}
+                >
+                  <option value="http">HTTP</option>
+                  <option value="socks5">SOCKS5</option>
+                </select>
+              </label>
+              <TextField
+                label={text.proxyHost}
+                value={settings.aiTranslation.proxyHost}
+                disabled={isRunning || !settings.aiTranslation.proxyEnabled}
+                placeholder="127.0.0.1"
+                onChange={(proxyHost) => updateAiTranslation({ proxyHost })}
+              />
+              <TextField
+                label={text.proxyPort}
+                value={settings.aiTranslation.proxyPort}
+                disabled={isRunning || !settings.aiTranslation.proxyEnabled}
+                placeholder="7890"
+                onChange={(proxyPort) => updateAiTranslation({ proxyPort })}
+              />
+            </div>
+            <p className="hint">{text.aiProxyHint}</p>
           </div>
           <label className="toggleField">
             <input
