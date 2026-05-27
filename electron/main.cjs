@@ -114,11 +114,8 @@ function getPythonCommand(extraArgs = []) {
 }
 
 function getWorkerEnv() {
-  const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || "http://127.0.0.1:7890";
   return {
     ...process.env,
-    HTTP_PROXY: process.env.HTTP_PROXY || proxy,
-    HTTPS_PROXY: process.env.HTTPS_PROXY || proxy,
     HF_HUB_ENABLE_HF_TRANSFER: process.env.HF_HUB_ENABLE_HF_TRANSFER || "0",
     HF_HUB_DISABLE_SYMLINKS_WARNING: process.env.HF_HUB_DISABLE_SYMLINKS_WARNING || "1",
     HF_HUB_ETAG_TIMEOUT: process.env.HF_HUB_ETAG_TIMEOUT || "30",

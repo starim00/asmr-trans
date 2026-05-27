@@ -40,6 +40,8 @@ AI translation sends context windows of nearby Japanese segments and writes the 
 
 ## Proxy
 
+The app does not inject a default proxy. It uses the network path available to the current Windows session. Configure a system proxy, TUN mode, VPN, or launch the app with proxy environment variables only when needed:
+
 ```powershell
 $env:HTTP_PROXY="http://127.0.0.1:7890"
 $env:HTTPS_PROXY="http://127.0.0.1:7890"
