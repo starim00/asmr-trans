@@ -120,6 +120,7 @@ type QueueTask = {
   result?: TranscriptionResult | null;
   error?: string | null;
   historyId?: string;
+  addedAt?: string;
   completedAt?: string;
   stageTimings?: Record<string, number>;
 };
@@ -128,6 +129,7 @@ type HistoryTask = {
   id: string;
   file: AudioFile;
   result: TranscriptionResult;
+  addedAt?: string;
   completedAt: string;
 };
 
@@ -147,6 +149,14 @@ interface Window {
     upsertHistory: (task: HistoryTask) => Promise<{ saved: boolean; id: string }>;
     retryDependencies: () => Promise<{ ok: boolean }>;
     cancelTranscription: () => Promise<{ canceled: boolean }>;
+    startTranslation: (payload: {
+      taskId: string;
+      detectedLanguage?: string;
+      computeDevice?: string;
+      segments: TranscriptionSegment[];
+      aiTranslationConfig?: AiTranslationConfig;
+    }) => Promise<{ started: boolean }>;
+    cancelTranslation: (taskId: string) => Promise<{ canceled: boolean }>;
     startTranscription: (payload: {
       audioPath: string;
       whisperModel?: WhisperModelName;
@@ -169,6 +179,9 @@ interface Window {
     onDone: (callback: (result: TranscriptionResult) => void) => () => void;
     onError: (callback: (error: WorkerError) => void) => () => void;
     onCanceled: (callback: (payload: { message?: string }) => void) => () => void;
+    onTranslateProgress: (callback: (payload: { taskId: string; progress: TranscriptionProgress }) => void) => () => void;
+    onTranslateDone: (callback: (payload: { taskId: string; result: TranscriptionResult }) => void) => () => void;
+    onTranslateError: (callback: (payload: { taskId: string; error: WorkerError }) => void) => () => void;
     onDependencyProgress: (callback: (progress: TranscriptionProgress) => void) => () => void;
   };
 }

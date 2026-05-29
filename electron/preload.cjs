@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld("asmrTrans", {
   retryDependencies: () => ipcRenderer.invoke("deps:retry"),
   startTranscription: (payload) => ipcRenderer.invoke("transcribe:start", payload),
   cancelTranscription: () => ipcRenderer.invoke("transcribe:cancel"),
+  startTranslation: (payload) => ipcRenderer.invoke("translate:start", payload),
+  cancelTranslation: (taskId) => ipcRenderer.invoke("translate:cancel", taskId),
   saveTxt: (payload) => ipcRenderer.invoke("export:txt", payload),
   exportBatch: (payload) => ipcRenderer.invoke("export:batch", payload),
   onProgress: (callback) => {
@@ -32,6 +34,21 @@ contextBridge.exposeInMainWorld("asmrTrans", {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("transcribe:canceled", listener);
     return () => ipcRenderer.removeListener("transcribe:canceled", listener);
+  },
+  onTranslateProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("translate:progress", listener);
+    return () => ipcRenderer.removeListener("translate:progress", listener);
+  },
+  onTranslateDone: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("translate:done", listener);
+    return () => ipcRenderer.removeListener("translate:done", listener);
+  },
+  onTranslateError: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("translate:error", listener);
+    return () => ipcRenderer.removeListener("translate:error", listener);
   },
   onDependencyProgress: (callback) => {
     const listener = (_event, progress) => callback(progress);

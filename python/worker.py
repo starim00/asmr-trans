@@ -619,12 +619,17 @@ def transcribe(request):
     detected_language = getattr(info, "language", "unknown") or "unknown"
     progress("transcribe", f"Transcription done. Detected language: {detected_language}", 52)
 
-    if detected_language.startswith("ja"):
+    translate_after_transcribe = bool(request.get("translateAfterTranscribe", True))
+
+    if detected_language.startswith("ja") and translate_after_transcribe:
         ai_config = request.get("aiTranslationConfig") or {}
         if not (ai_config.get("apiKey") or "").strip():
             raise RuntimeError("Japanese audio requires AI translation. Configure an AI API key first.")
         progress("translate", "Using AI translation with context windows...", 58)
         segments = translate_segments_with_ai(segments, ai_config)
+    elif detected_language.startswith("ja"):
+        for segment in segments:
+            segment["translatedText"] = ""
     elif detected_language.startswith("zh"):
         for segment in segments:
             segment["translatedText"] = None
@@ -638,6 +643,23 @@ def transcribe(request):
         "detectedLanguage": detected_language,
         "computeDevice": device,
         "segments": segments,
+    }
+
+
+def translate(request):
+    segments = request.get("segments") or []
+    ai_config = request.get("aiTranslationConfig") or {}
+    if not segments:
+      raise ValueError("Translation request has no segments.")
+    if not (ai_config.get("apiKey") or "").strip():
+        raise RuntimeError("Japanese audio requires AI translation. Configure an AI API key first.")
+    progress("translate", "Using AI translation with context windows...", 5)
+    translated_segments = translate_segments_with_ai(segments, ai_config)
+    progress("done", "Translation done.", 100)
+    return {
+        "detectedLanguage": request.get("detectedLanguage", "ja"),
+        "computeDevice": request.get("computeDevice"),
+        "segments": translated_segments,
     }
 
 
@@ -666,7 +688,10 @@ def main():
 
     try:
         request = parse_request(args.request_file)
-        result = transcribe(request)
+        if request.get("mode") == "translate":
+            result = translate(request)
+        else:
+            result = transcribe(request)
         emit("done", result)
     except Exception as error:
         emit("error", {"message": str(error), "traceback": traceback.format_exc()})

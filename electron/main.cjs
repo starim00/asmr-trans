@@ -7,6 +7,7 @@ const MEDIA_EXTENSIONS = ["mp3", "wav", "m4a", "flac", "ogg", "aac", "mp4", "mkv
 let mainWindow = null;
 let activeWorker = null;
 let activeWorkerCancelRequested = false;
+const activeTranslationWorkers = new Map();
 let dependencyInstallPromise = null;
 
 const DEFAULT_AI_SYSTEM_PROMPT =
@@ -149,6 +150,7 @@ function upsertHistoryTask(task) {
     id,
     file: task.file,
     result: task.result,
+    addedAt: task.addedAt || task.completedAt || new Date().toISOString(),
     completedAt: task.completedAt || new Date().toISOString(),
   };
   const filtered = history.filter((item) => item.id !== id);
@@ -440,6 +442,10 @@ app.on("before-quit", () => {
   if (activeWorker) {
     activeWorker.kill();
   }
+  for (const worker of activeTranslationWorkers.values()) {
+    worker.kill();
+  }
+  activeTranslationWorkers.clear();
 });
 
 ipcMain.handle("audio:select", async () => {
@@ -570,6 +576,7 @@ ipcMain.handle("transcribe:start", async (event, payload) => {
     computeDevice: payload.computeDevice || savedSettings.computeDevice || "auto",
     outputLanguage: "zh",
     modelsDir,
+    translateAfterTranscribe: false,
   };
 
   activeWorker = spawn(executable, args, {
@@ -659,6 +666,120 @@ ipcMain.handle("transcribe:cancel", async (event) => {
     event.sender.send("transcribe:canceled", { message: "\u4efb\u52a1\u5df2\u53d6\u6d88\u3002" });
     activeWorker = null;
     activeWorkerCancelRequested = false;
+  }
+  return { canceled: true };
+});
+
+ipcMain.handle("translate:start", async (event, payload) => {
+  if (!payload || !payload.taskId || !Array.isArray(payload.segments)) {
+    throw new Error("Invalid translation task.");
+  }
+  if (activeTranslationWorkers.has(payload.taskId)) {
+    throw new Error("Translation task is already running.");
+  }
+
+  await ensurePythonDependencies();
+
+  const savedSettings = readSettings();
+  const aiTranslationConfig = {
+    ...savedSettings.aiTranslation,
+    ...(payload.aiTranslationConfig || {}),
+  };
+  const { executable, args } = getPythonCommand();
+  const request = {
+    mode: "translate",
+    taskId: payload.taskId,
+    detectedLanguage: payload.detectedLanguage || "ja",
+    computeDevice: payload.computeDevice,
+    segments: payload.segments,
+    aiTranslationConfig,
+  };
+
+  const worker = spawn(executable, args, {
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+    env: getWorkerEnv(),
+  });
+  activeTranslationWorkers.set(payload.taskId, worker);
+
+  const releaseWorker = () => {
+    if (activeTranslationWorkers.get(payload.taskId) === worker) {
+      activeTranslationWorkers.delete(payload.taskId);
+    }
+  };
+
+  let stderr = "";
+  worker.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  worker.stdout.setEncoding("utf8");
+  let buffer = "";
+  let workerReportedError = false;
+  worker.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const message = JSON.parse(line);
+        if (message.type === "progress") {
+          event.sender.send("translate:progress", { taskId: payload.taskId, progress: message.payload });
+        } else if (message.type === "done") {
+          workerReportedError = false;
+          releaseWorker();
+          event.sender.send("translate:done", { taskId: payload.taskId, result: message.payload });
+        } else if (message.type === "error") {
+          workerReportedError = true;
+          releaseWorker();
+          event.sender.send("translate:error", { taskId: payload.taskId, error: message.payload });
+        }
+      } catch (_error) {
+        event.sender.send("translate:error", {
+          taskId: payload.taskId,
+          error: { message: `Unable to parse Python output: ${line}` },
+        });
+      }
+    }
+  });
+
+  worker.on("error", (error) => {
+    workerReportedError = true;
+    event.sender.send("translate:error", {
+      taskId: payload.taskId,
+      error: { message: `Unable to start Python translation worker: ${error.message}` },
+    });
+    releaseWorker();
+  });
+
+  worker.on("close", (code) => {
+    if (activeTranslationWorkers.get(payload.taskId) === worker && code !== 0 && !workerReportedError) {
+      event.sender.send("translate:error", {
+        taskId: payload.taskId,
+        error: { message: stderr.trim() || `Python translation worker exited with code ${code}` },
+      });
+    }
+    releaseWorker();
+  });
+
+  worker.stdin.write(Buffer.from(JSON.stringify(request), "utf8"));
+  worker.stdin.end();
+
+  return { started: true };
+});
+
+ipcMain.handle("translate:cancel", async (_event, taskId) => {
+  const worker = activeTranslationWorkers.get(taskId);
+  if (!worker) {
+    return { canceled: false };
+  }
+  activeTranslationWorkers.delete(taskId);
+  try {
+    worker.kill();
+  } catch (_error) {
+    // Nothing else to do.
   }
   return { canceled: true };
 });

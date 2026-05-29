@@ -111,6 +111,8 @@ const text = {
   noBatchResult: "\u6ca1\u6709\u5df2\u5b8c\u6210\u7684\u4efb\u52a1\u53ef\u4ee5\u6279\u91cf\u5bfc\u51fa\u3002",
   chooseFirst: "\u8bf7\u5148\u6dfb\u52a0\u6587\u4ef6\u3002",
   historyLoaded: "\u5386\u53f2\u8bb0\u5f55",
+  sortOldestFirst: "\u6700\u65e9\u6dfb\u52a0\u4f18\u5148",
+  sortNewestFirst: "\u6700\u65b0\u6dfb\u52a0\u4f18\u5148",
   realtimeSpeed: "\u5b9e\u65f6\u901f\u5ea6",
   eta: "\u9884\u8ba1\u5269\u4f59",
   elapsed: "\u5df2\u7528\u65f6",
@@ -218,6 +220,10 @@ const missingDesktopApi = {
   upsertHistory: async (task: HistoryTask) => ({ saved: Boolean(task), id: task.id }),
   retryDependencies: async () => ({ ok: false }),
   cancelTranscription: async () => ({ canceled: false }),
+  startTranslation: async () => {
+    throw new Error("\u8bf7\u5728 Electron \u684c\u9762\u5ba2\u6237\u7aef\u4e2d\u542f\u52a8\u7ffb\u8bd1\u3002");
+  },
+  cancelTranslation: async () => ({ canceled: false }),
   startTranscription: async () => {
     throw new Error("\u8bf7\u5728 Electron \u684c\u9762\u5ba2\u6237\u7aef\u4e2d\u542f\u52a8\u8f6c\u5199\u3002");
   },
@@ -231,6 +237,9 @@ const missingDesktopApi = {
   onDone: () => () => undefined,
   onError: () => () => undefined,
   onCanceled: () => () => undefined,
+  onTranslateProgress: () => () => undefined,
+  onTranslateDone: () => () => undefined,
+  onTranslateError: () => () => undefined,
   onDependencyProgress: () => () => undefined,
 };
 
@@ -354,6 +363,23 @@ function mergeStageTiming(current: Record<string, number> | undefined, progress:
   };
 }
 
+function shouldTranslateWithAi(result: TranscriptionResult) {
+  return result.detectedLanguage.toLowerCase().startsWith("ja");
+}
+
+function resizeTextarea(textarea: HTMLTextAreaElement) {
+  textarea.style.height = "auto";
+  textarea.style.height = `${Math.max(textarea.scrollHeight, 44)}px`;
+}
+
+function taskAddedTime(task: QueueTask | HistoryTask) {
+  return new Date(task.addedAt || task.completedAt || 0).getTime() || 0;
+}
+
+function taskIdentity(task: QueueTask) {
+  return task.historyId || task.id;
+}
+
 function MediaIcon({ extension }: { extension: string }) {
   return VIDEO_EXTENSIONS.has(extension.toLowerCase()) ? <FileVideo size={20} /> : <FileAudio size={20} />;
 }
@@ -363,6 +389,7 @@ function createTask(file: AudioFile): QueueTask {
     id: `${file.path}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     file,
     status: "queued",
+    addedAt: new Date().toISOString(),
     progress: null,
     result: null,
     error: null,
@@ -378,6 +405,7 @@ function createHistoryQueueTask(task: HistoryTask): QueueTask {
     progress: { stage: "done", message: text.historyLoaded, percent: 100 },
     result: task.result,
     error: null,
+    addedAt: task.addedAt || task.completedAt,
     completedAt: task.completedAt,
   };
 }
@@ -388,6 +416,7 @@ function buildHistoryTask(task: QueueTask): HistoryTask | null {
     id: task.historyId || `${task.file.path}-${task.completedAt || Date.now()}`,
     file: task.file,
     result: task.result,
+    addedAt: task.addedAt,
     completedAt: task.completedAt || new Date().toISOString(),
   };
 }
@@ -528,6 +557,7 @@ function App() {
   const [isQueueRunning, setIsQueueRunning] = useState(false);
   const [isQueuePaused, setIsQueuePaused] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isTaskOrderDescending, setIsTaskOrderDescending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedPath, setSavedPath] = useState<string | null>(null);
   const [globalProgress, setGlobalProgress] = useState<TranscriptionProgress | null>(null);
@@ -535,6 +565,8 @@ function App() {
   const currentTaskIdRef = useRef<string | null>(null);
   const taskResolverRef = useRef<((ok: boolean) => void) | null>(null);
   const queuePausedRef = useRef(false);
+  const historyLoadedRef = useRef(false);
+  const translationTaskIdsRef = useRef<Set<string>>(new Set());
   const tasksRef = useRef<QueueTask[]>([]);
   const settingsRef = useRef(settings);
   const whisperModelRef = useRef(whisperModel);
@@ -542,12 +574,16 @@ function App() {
   const resultScrollRef = useRef<HTMLDivElement | null>(null);
 
   const selectedTask = useMemo(
-    () => tasks.find((task) => task.id === selectedTaskId) || tasks[0] || null,
+    () => tasks.find((task) => task.id === selectedTaskId) || null,
     [selectedTaskId, tasks],
   );
   const txtContent = useMemo(() => buildTxt(selectedTask?.result), [selectedTask]);
   const srtContent = useMemo(() => buildSrt(selectedTask?.result), [selectedTask]);
-  const doneTasks = useMemo(() => tasks.filter((task) => task.result), [tasks]);
+  const doneTasks = useMemo(() => tasks.filter((task) => task.status === "done" && task.result), [tasks]);
+  const visibleTasks = useMemo(
+    () => (isTaskOrderDescending ? [...tasks].reverse() : tasks),
+    [isTaskOrderDescending, tasks],
+  );
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -572,15 +608,28 @@ function App() {
   }, [selectedTaskId]);
 
   useEffect(() => {
+    window.requestAnimationFrame(() => {
+      document.querySelectorAll<HTMLTextAreaElement>(".segmentField textarea").forEach(resizeTextarea);
+    });
+  }, [selectedTask?.id, selectedTask?.result]);
+
+  useEffect(() => {
     desktopApi.getModelStatus().then(setModelStatus).catch((err) => setError(err instanceof Error ? err.message : String(err)));
     desktopApi.getHardwareStatus().then(setHardwareStatus).catch(() => undefined);
     desktopApi
       .getHistory()
       .then((history) => {
-        const historyTasks = history.map(createHistoryQueueTask);
+        if (historyLoadedRef.current) return;
+        historyLoadedRef.current = true;
+        const historyTasks = [...history]
+          .sort((left, right) => taskAddedTime(left) - taskAddedTime(right))
+          .map(createHistoryQueueTask);
         if (!historyTasks.length) return;
-        setTasks((current) => [...current, ...historyTasks]);
-        setSelectedTaskId((current) => current || historyTasks[0].id);
+        setTasks((current) => {
+          const knownIds = new Set(current.map(taskIdentity));
+          const uniqueHistoryTasks = historyTasks.filter((task) => !knownIds.has(taskIdentity(task)));
+          return [...current, ...uniqueHistoryTasks];
+        });
       })
       .catch(() => undefined);
     desktopApi
@@ -612,36 +661,22 @@ function App() {
     const offDone = desktopApi.onDone((nextResult) => {
       const taskId = currentTaskIdRef.current;
       if (!taskId) return;
-      const completedAt = new Date().toISOString();
-      setTasks((current) =>
-        current.map((task) =>
-          task.id === taskId
-            ? {
-                ...task,
-                status: "done",
-                result: nextResult,
-                completedAt,
-                progress: { ...task.progress, stage: "done", message: text.done, percent: 100 },
+      if (shouldTranslateWithAi(nextResult)) {
+        setTasks((current) =>
+          current.map((task) =>
+            task.id === taskId
+              ? {
+                  ...task,
+                  status: "running",
+                  result: nextResult,
+                  progress: { ...task.progress, stage: "translate", message: "\u6b63\u5728 AI \u7ffb\u8bd1...", percent: 55 },
                 }
-            : task,
-        ),
-      );
-      const completedTask = tasksRef.current.find((task) => task.id === taskId);
-      if (completedTask) {
-        const historyTask: HistoryTask = {
-          id: completedTask.historyId || `${completedTask.file.path}-${completedAt}`,
-          file: completedTask.file,
-          result: nextResult,
-          completedAt,
-        };
-        desktopApi
-          .upsertHistory(historyTask)
-          .then((response) => {
-            setTasks((current) =>
-              current.map((task) => (task.id === taskId ? { ...task, historyId: response.id, completedAt } : task)),
-            );
-          })
-          .catch(() => undefined);
+              : task,
+          ),
+        );
+        void startTaskTranslation(taskId, nextResult);
+      } else {
+        completeTaskWithResult(taskId, nextResult);
       }
       desktopApi.getModelStatus().then(setModelStatus).catch(() => undefined);
       desktopApi.getHardwareStatus().then(setHardwareStatus).catch(() => undefined);
@@ -672,6 +707,32 @@ function App() {
       taskResolverRef.current?.(false);
       taskResolverRef.current = null;
     });
+    const offTranslateProgress = desktopApi.onTranslateProgress(({ taskId, progress }) => {
+      setTasks((current) =>
+        current.map((task) =>
+          task.id === taskId
+            ? {
+                ...task,
+                status: "running",
+                progress,
+                stageTimings: mergeStageTiming(task.stageTimings, progress),
+              }
+            : task,
+        ),
+      );
+    });
+    const offTranslateDone = desktopApi.onTranslateDone(({ taskId, result }) => {
+      translationTaskIdsRef.current.delete(taskId);
+      completeTaskWithResult(taskId, result);
+    });
+    const offTranslateError = desktopApi.onTranslateError(({ taskId, error: translateError }) => {
+      translationTaskIdsRef.current.delete(taskId);
+      setTasks((current) =>
+        current.map((task) =>
+          task.id === taskId ? { ...task, status: "failed", error: translateError.message, progress: null } : task,
+        ),
+      );
+    });
     const offDependencyProgress = desktopApi.onDependencyProgress((nextProgress) => {
       const taskId = currentTaskIdRef.current;
       if (!taskId) {
@@ -692,6 +753,9 @@ function App() {
       offDone();
       offError();
       offCanceled();
+      offTranslateProgress();
+      offTranslateDone();
+      offTranslateError();
       offDependencyProgress();
     };
   }, []);
@@ -708,6 +772,64 @@ function App() {
       setSelectedTaskId((current) => current || nextTasks[0].id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function completeTaskWithResult(taskId: string, result: TranscriptionResult) {
+    const completedAt = new Date().toISOString();
+    setTasks((current) =>
+      current.map((task) =>
+        task.id === taskId
+          ? {
+              ...task,
+              status: "done",
+              result,
+              completedAt,
+              progress: { ...task.progress, stage: "done", message: text.done, percent: 100 },
+            }
+          : task,
+      ),
+    );
+    const completedTask = tasksRef.current.find((task) => task.id === taskId);
+    if (!completedTask) {
+      return;
+    }
+        const historyTask: HistoryTask = {
+          id: completedTask.historyId || `${completedTask.file.path}-${completedAt}`,
+          file: completedTask.file,
+          result,
+          addedAt: completedTask.addedAt || completedAt,
+          completedAt,
+        };
+    desktopApi
+      .upsertHistory(historyTask)
+      .then((response) => {
+        setTasks((current) =>
+          current.map((task) => (task.id === taskId ? { ...task, historyId: response.id, completedAt } : task)),
+        );
+      })
+      .catch(() => undefined);
+  }
+
+  async function startTaskTranslation(taskId: string, result: TranscriptionResult) {
+    if (translationTaskIdsRef.current.has(taskId)) {
+      return;
+    }
+    translationTaskIdsRef.current.add(taskId);
+    try {
+      await desktopApi.startTranslation({
+        taskId,
+        detectedLanguage: result.detectedLanguage,
+        computeDevice: result.computeDevice,
+        segments: result.segments,
+        aiTranslationConfig: settingsRef.current.aiTranslation,
+      });
+    } catch (err) {
+      translationTaskIdsRef.current.delete(taskId);
+      const message = err instanceof Error ? err.message : String(err);
+      setTasks((current) =>
+        current.map((task) => (task.id === taskId ? { ...task, status: "failed", error: message, progress: null } : task)),
+      );
     }
   }
 
@@ -794,7 +916,17 @@ function App() {
       return;
     }
     if (target.status === "running") {
-      await desktopApi.cancelTranscription();
+      if (currentTaskIdRef.current === taskId) {
+        await desktopApi.cancelTranscription();
+        return;
+      }
+      await desktopApi.cancelTranslation(taskId);
+      translationTaskIdsRef.current.delete(taskId);
+      setTasks((current) =>
+        current.map((task) =>
+          task.id === taskId ? { ...task, status: "canceled", error: text.canceled, progress: null } : task,
+        ),
+      );
       return;
     }
     setTasks((current) =>
@@ -844,6 +976,16 @@ function App() {
       if (!historyTask) return;
       desktopApi.upsertHistory(historyTask).catch(() => undefined);
     }, 0);
+  }
+
+  function handleSegmentTextChange(
+    event: React.ChangeEvent<HTMLTextAreaElement>,
+    taskId: string,
+    segmentIndex: number,
+    field: "sourceText" | "translatedText",
+  ) {
+    resizeTextarea(event.currentTarget);
+    updateSegmentText(taskId, segmentIndex, field, event.currentTarget.value);
   }
 
   function updateAiTranslation(patch: Partial<AiTranslationConfig>) {
@@ -1069,11 +1211,16 @@ function App() {
         <section className="taskPanel">
           <div className="panelHeader">
             <h2>{text.queue}</h2>
-            <span>{tasks.length}</span>
+            <div className="panelHeaderActions">
+              <button className="smallToggleButton" onClick={() => setIsTaskOrderDescending((current) => !current)}>
+                {isTaskOrderDescending ? text.sortNewestFirst : text.sortOldestFirst}
+              </button>
+              <span>{tasks.length}</span>
+            </div>
           </div>
           <div className="taskList">
             {!tasks.length && <div className="emptyState compactEmpty">{text.emptyQueue}</div>}
-            {tasks.map((task) => (
+            {visibleTasks.map((task) => (
               <div
                 key={task.id}
                 className={`taskItem ${selectedTask?.id === task.id ? "selected" : ""}`}
@@ -1132,11 +1279,11 @@ function App() {
               {selectedTask && <ProgressMetrics task={selectedTask} />}
             </div>
             <div className="exportActions">
-              <button className="secondaryButton" onClick={saveSelectedTxt} disabled={!selectedTask?.result}>
+              <button className="secondaryButton" onClick={saveSelectedTxt} disabled={selectedTask?.status !== "done" || !selectedTask?.result}>
                 <Save size={18} />
                 {text.saveTxt}
               </button>
-              <button className="secondaryButton" onClick={saveSelectedSrt} disabled={!selectedTask?.result}>
+              <button className="secondaryButton" onClick={saveSelectedSrt} disabled={selectedTask?.status !== "done" || !selectedTask?.result}>
                 <Download size={18} />
                 {text.saveSrt}
               </button>
@@ -1156,16 +1303,16 @@ function App() {
                       <span>{text.source}</span>
                       <textarea
                         value={segment.sourceText}
-                        onChange={(event) => updateSegmentText(selectedTask.id, index, "sourceText", event.target.value)}
-                        rows={3}
+                        onChange={(event) => handleSegmentTextChange(event, selectedTask.id, index, "sourceText")}
+                        rows={1}
                       />
                     </label>
                     <label className="segmentField">
                       <span>{text.translation}</span>
                       <textarea
                         value={segment.translatedText}
-                        onChange={(event) => updateSegmentText(selectedTask.id, index, "translatedText", event.target.value)}
-                        rows={3}
+                        onChange={(event) => handleSegmentTextChange(event, selectedTask.id, index, "translatedText")}
+                        rows={1}
                       />
                     </label>
                   </>
@@ -1173,8 +1320,8 @@ function App() {
                   <label className="segmentField">
                     <textarea
                       value={segment.sourceText}
-                      onChange={(event) => updateSegmentText(selectedTask.id, index, "sourceText", event.target.value)}
-                      rows={3}
+                      onChange={(event) => handleSegmentTextChange(event, selectedTask.id, index, "sourceText")}
+                      rows={1}
                     />
                   </label>
                 )}

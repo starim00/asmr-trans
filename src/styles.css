@@ -277,7 +277,13 @@ h3 {
   font-weight: 800;
 }
 
-.panelHeader span {
+.panelHeaderActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panelHeaderActions span {
   display: inline-grid;
   place-items: center;
   min-width: 28px;
@@ -285,6 +291,18 @@ h3 {
   color: #0f766e;
   background: #e6f4ef;
   border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.smallToggleButton {
+  min-height: 28px;
+  padding: 0 10px;
+  color: #1c3530;
+  background: #ffffff;
+  border: 1px solid rgba(28, 53, 48, 0.16);
+  border-radius: 999px;
+  cursor: pointer;
   font-size: 12px;
   font-weight: 900;
 }
@@ -485,9 +503,11 @@ h3 {
 
 .segmentField textarea {
   width: 100%;
-  min-height: 78px;
+  min-height: 44px;
+  max-height: 220px;
   resize: vertical;
-  padding: 10px 12px;
+  overflow: hidden;
+  padding: 8px 10px;
   background: #fbfaf5;
   border: 1px solid rgba(28, 53, 48, 0.16);
   border-radius: 7px;
