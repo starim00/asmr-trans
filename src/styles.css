@@ -49,8 +49,9 @@ p {
 }
 
 h1 {
-  font-size: 34px;
-  line-height: 1.05;
+  font-size: 30px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 h2 {
@@ -64,18 +65,23 @@ h3 {
 .shell {
   position: relative;
   height: 100%;
-  padding: 24px;
+  padding: 18px 20px 20px;
   overflow: hidden;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
 }
 
 .topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 18px;
+  gap: 18px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(46, 56, 52, 0.09);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(27, 35, 32, 0.06);
 }
 
 .eyebrow {
@@ -97,16 +103,19 @@ h3 {
 }
 
 .toolbarSummary {
-  margin-top: 6px;
+  margin-top: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .globalProgress {
-  width: min(560px, 48vw);
+  width: 100%;
   display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
   gap: 10px;
   align-items: center;
-  margin-top: 10px;
+  margin-top: 2px;
   color: #686a61;
   font-size: 12px;
   line-height: 1.35;
@@ -129,8 +138,32 @@ h3 {
 .toolbarActions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.brandBlock {
+  min-width: 0;
+}
+
+.commandArea {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+}
+
+.primaryActions,
+.secondaryActions {
+  width: 100%;
+}
+
+.primaryActions {
+  justify-content: flex-end;
+}
+
+.secondaryActions {
   justify-content: flex-end;
 }
 
@@ -140,8 +173,8 @@ h3 {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 40px;
-  padding: 0 14px;
+  min-height: 38px;
+  padding: 0 13px;
   border-radius: 7px;
   font-weight: 800;
   cursor: pointer;
@@ -186,7 +219,7 @@ h3 {
 
 .queueWorkspace {
   display: grid;
-  grid-template-columns: minmax(340px, 430px) minmax(0, 1fr);
+  grid-template-columns: minmax(360px, 420px) minmax(0, 1fr);
   gap: 18px;
   align-items: stretch;
 }
@@ -212,7 +245,7 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 18px;
+  padding: 14px 16px;
   border-bottom: 1px solid rgba(46, 56, 52, 0.12);
 }
 
@@ -222,6 +255,26 @@ h3 {
   gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.progressMetrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.progressMetrics span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  color: #43504c;
+  background: #f4f1e8;
+  border: 1px solid rgba(46, 56, 52, 0.1);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .panelHeader span {
@@ -240,7 +293,7 @@ h3 {
 .segments {
   min-height: 0;
   overflow: auto;
-  padding: 14px;
+  padding: 12px;
   display: grid;
   align-content: start;
   gap: 10px;
@@ -273,7 +326,7 @@ h3 {
 .taskItem {
   width: 100%;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto 32px;
   gap: 10px;
   align-items: start;
   padding: 12px;
@@ -283,6 +336,11 @@ h3 {
   border: 1px solid rgba(46, 56, 52, 0.11);
   border-radius: 8px;
   cursor: pointer;
+}
+
+.taskItem:focus-visible {
+  outline: 2px solid rgba(15, 118, 110, 0.55);
+  outline-offset: 2px;
 }
 
 .taskItem.selected {
@@ -350,8 +408,29 @@ h3 {
   background: #fef3c7;
 }
 
+.taskRemoveButton {
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  color: #7f1d1d;
+  background: rgba(254, 242, 242, 0.72);
+  border: 1px solid rgba(127, 29, 29, 0.16);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.taskRemoveButton:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+.taskRemoveButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .emptyState {
-  min-height: 320px;
+  min-height: 260px;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -363,7 +442,7 @@ h3 {
 }
 
 .compactEmpty {
-  min-height: 220px;
+  min-height: 200px;
 }
 
 .segment {
@@ -381,20 +460,43 @@ h3 {
   font-weight: 900;
 }
 
-.segment p {
+.segment p,
+.segmentField textarea {
   color: #2b2c29;
   font-size: 15px;
   line-height: 1.7;
   white-space: pre-wrap;
 }
 
-.segment span {
+.segment span,
+.segmentField span {
   display: inline-flex;
   min-width: 42px;
   margin-right: 8px;
   color: #59635f;
   font-size: 13px;
   font-weight: 900;
+}
+
+.segmentField {
+  display: grid;
+  gap: 6px;
+}
+
+.segmentField textarea {
+  width: 100%;
+  min-height: 78px;
+  resize: vertical;
+  padding: 10px 12px;
+  background: #fbfaf5;
+  border: 1px solid rgba(28, 53, 48, 0.16);
+  border-radius: 7px;
+  font-family: inherit;
+}
+
+.segmentField textarea:focus {
+  outline: 2px solid rgba(15, 118, 110, 0.3);
+  border-color: rgba(15, 118, 110, 0.55);
 }
 
 .settingsDrawer {
@@ -532,6 +634,18 @@ h3 {
   gap: 10px;
 }
 
+.presetGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.presetButton {
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 .field,
 .toggleField {
   display: grid;
@@ -616,21 +730,25 @@ h3 {
     min-width: 0;
   }
 
-  .shell {
-    padding: 16px;
-  }
-
   .topbar {
-    align-items: flex-start;
-    flex-direction: column;
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .toolbarActions {
     justify-content: flex-start;
   }
 
+  .commandArea {
+    justify-items: stretch;
+  }
+
+  .primaryActions,
+  .secondaryActions {
+    justify-content: flex-start;
+  }
+
   .globalProgress {
-    width: 100%;
     grid-template-columns: 1fr;
   }
 

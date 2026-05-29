@@ -56,18 +56,45 @@ type NetworkSettings = {
   proxyPort: string;
 };
 
+type AudioEnhancementSettings = {
+  enabled: boolean;
+  normalize: boolean;
+  compression: boolean;
+  denoise: boolean;
+  mono: boolean;
+  targetPeak: number;
+  noiseGateDb: number;
+};
+
+type WhisperAdvancedSettings = {
+  profile: "fast" | "balanced" | "accurate" | "asmr";
+  beamSize: number;
+  vadFilter: boolean;
+  noSpeechThreshold: number;
+  conditionOnPreviousText: boolean;
+  initialPrompt: string;
+};
+
 type AppSettings = {
   whisperModel: WhisperModelName;
   computeDevice: ComputeDevice;
   translationBackend: TranslationBackend;
   aiTranslation: AiTranslationConfig;
   network: NetworkSettings;
+  audioEnhancement: AudioEnhancementSettings;
+  whisperAdvanced: WhisperAdvancedSettings;
 };
 
 type TranscriptionProgress = {
   stage: string;
   message: string;
   percent?: number;
+  processedSeconds?: number;
+  totalSeconds?: number;
+  elapsedSeconds?: number;
+  stageElapsedSeconds?: number;
+  speedFactor?: number;
+  etaSeconds?: number;
 };
 
 type TranscriptionSegment = {
@@ -92,6 +119,16 @@ type QueueTask = {
   progress?: TranscriptionProgress | null;
   result?: TranscriptionResult | null;
   error?: string | null;
+  historyId?: string;
+  completedAt?: string;
+  stageTimings?: Record<string, number>;
+};
+
+type HistoryTask = {
+  id: string;
+  file: AudioFile;
+  result: TranscriptionResult;
+  completedAt: string;
 };
 
 type WorkerError = {
@@ -106,6 +143,8 @@ interface Window {
     getHardwareStatus: () => Promise<HardwareStatus>;
     getSettings: () => Promise<AppSettings>;
     updateSettings: (settings: AppSettings) => Promise<AppSettings>;
+    getHistory: () => Promise<HistoryTask[]>;
+    upsertHistory: (task: HistoryTask) => Promise<{ saved: boolean; id: string }>;
     retryDependencies: () => Promise<{ ok: boolean }>;
     cancelTranscription: () => Promise<{ canceled: boolean }>;
     startTranscription: (payload: {
@@ -114,6 +153,8 @@ interface Window {
       translationModel?: string;
       translationBackend?: TranslationBackend;
       aiTranslationConfig?: AiTranslationConfig;
+      audioEnhancement?: AudioEnhancementSettings;
+      whisperAdvanced?: WhisperAdvancedSettings;
       computeDevice?: ComputeDevice;
     }) => Promise<{ started: boolean }>;
     saveTxt: (payload: {
@@ -121,6 +162,9 @@ interface Window {
       defaultFileName?: string;
       defaultDirectory?: string;
     }) => Promise<{ saved: boolean; path?: string }>;
+    exportBatch: (payload: {
+      items: Array<{ content: string; fileName: string }>;
+    }) => Promise<{ saved: boolean; directory?: string; count?: number }>;
     onProgress: (callback: (progress: TranscriptionProgress) => void) => () => void;
     onDone: (callback: (result: TranscriptionResult) => void) => () => void;
     onError: (callback: (error: WorkerError) => void) => () => void;

@@ -6,10 +6,13 @@ contextBridge.exposeInMainWorld("asmrTrans", {
   getHardwareStatus: () => ipcRenderer.invoke("hardware:status"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (settings) => ipcRenderer.invoke("settings:update", settings),
+  getHistory: () => ipcRenderer.invoke("history:get"),
+  upsertHistory: (task) => ipcRenderer.invoke("history:upsert", task),
   retryDependencies: () => ipcRenderer.invoke("deps:retry"),
   startTranscription: (payload) => ipcRenderer.invoke("transcribe:start", payload),
   cancelTranscription: () => ipcRenderer.invoke("transcribe:cancel"),
   saveTxt: (payload) => ipcRenderer.invoke("export:txt", payload),
+  exportBatch: (payload) => ipcRenderer.invoke("export:batch", payload),
   onProgress: (callback) => {
     const listener = (_event, progress) => callback(progress);
     ipcRenderer.on("transcribe:progress", listener);

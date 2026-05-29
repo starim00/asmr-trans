@@ -15,6 +15,7 @@ import {
   Settings,
   SlidersHorizontal,
   Square,
+  Trash2,
   X,
 } from "lucide-react";
 import "./styles.css";
@@ -56,6 +57,23 @@ const DEEPSEEK_PRESET: AppSettings = {
     proxyHost: "127.0.0.1",
     proxyPort: "7890",
   },
+  audioEnhancement: {
+    enabled: false,
+    normalize: true,
+    compression: true,
+    denoise: false,
+    mono: true,
+    targetPeak: 0.9,
+    noiseGateDb: -48,
+  },
+  whisperAdvanced: {
+    profile: "balanced",
+    beamSize: 5,
+    vadFilter: true,
+    noSpeechThreshold: 0.6,
+    conditionOnPreviousText: false,
+    initialPrompt: "",
+  },
 };
 
 const WHISPER_MODELS: Array<{ value: WhisperModelName; label: string; description: string }> = [
@@ -75,6 +93,7 @@ const text = {
   pauseQueue: "\u6682\u505c",
   resumeQueue: "\u6062\u590d",
   cancelTask: "\u53d6\u6d88\u4efb\u52a1",
+  removeTask: "\u79fb\u9664\u4efb\u52a1",
   settings: "\u8bbe\u7f6e",
   queue: "\u4efb\u52a1\u961f\u5217",
   result: "\u8f6c\u5199\u7ed3\u679c",
@@ -84,9 +103,18 @@ const text = {
   translation: "\u8bd1\u6587",
   saveTxt: "\u4fdd\u5b58\u4e3a txt",
   saveSrt: "\u4fdd\u5b58\u4e3a srt",
+  exportAllTxt: "\u6279\u91cf\u5bfc\u51fa txt",
+  exportAllSrt: "\u6279\u91cf\u5bfc\u51fa srt",
   saved: "\u5df2\u4fdd\u5b58\uff1a",
+  batchSaved: "\u6279\u91cf\u5bfc\u51fa\u5b8c\u6210\uff1a",
   noResultToSave: "\u5f53\u524d\u4efb\u52a1\u6ca1\u6709\u53ef\u4fdd\u5b58\u7684\u7ed3\u679c\u3002",
+  noBatchResult: "\u6ca1\u6709\u5df2\u5b8c\u6210\u7684\u4efb\u52a1\u53ef\u4ee5\u6279\u91cf\u5bfc\u51fa\u3002",
   chooseFirst: "\u8bf7\u5148\u6dfb\u52a0\u6587\u4ef6\u3002",
+  historyLoaded: "\u5386\u53f2\u8bb0\u5f55",
+  realtimeSpeed: "\u5b9e\u65f6\u901f\u5ea6",
+  eta: "\u9884\u8ba1\u5269\u4f59",
+  elapsed: "\u5df2\u7528\u65f6",
+  stageTiming: "\u9636\u6bb5\u8017\u65f6",
   queued: "\u7b49\u5f85\u4e2d",
   running: "\u5904\u7406\u4e2d",
   done: "\u5df2\u5b8c\u6210",
@@ -99,6 +127,34 @@ const text = {
   modelChoice: "Whisper \u6a21\u578b",
   compute: "\u8ba1\u7b97\u8bbe\u5907",
   auto: "\u81ea\u52a8",
+  audioEnhancement: "\u97f3\u9891\u589e\u5f3a",
+  enableAudioEnhancement: "\u542f\u7528\u8f6c\u5199\u524d\u97f3\u9891\u589e\u5f3a",
+  normalizeAudio: "\u97f3\u91cf\u6807\u51c6\u5316",
+  compressAudio: "\u52a8\u6001\u538b\u7f29",
+  denoiseAudio: "\u8f7b\u91cf\u964d\u566a\u95e8\u9650",
+  monoAudio: "\u6df7\u5408\u4e3a\u5355\u58f0\u9053",
+  targetPeak: "\u76ee\u6807\u5cf0\u503c",
+  noiseGateDb: "\u964d\u566a\u95e8\u9650 dB",
+  audioEnhancementHint: "\u9ed8\u8ba4\u5173\u95ed\uff0c\u9002\u5408\u4f4e\u97f3\u91cf ASMR\u3001\u8f7b\u58f0\u6216\u80cc\u666f\u97f3\u6548\u8f83\u591a\u7684\u6587\u4ef6\u3002",
+  whisperAdvanced: "Whisper \u9ad8\u7ea7\u53c2\u6570",
+  recognitionPresets: "\u8bc6\u522b\u9884\u8bbe",
+  presetGeneral: "\u901a\u7528\u9ed8\u8ba4",
+  presetAsmr: "\u4f4e\u8bed ASMR",
+  presetNoisy: "\u80cc\u666f\u97f3\u6548\u591a",
+  presetFast: "\u957f\u97f3\u9891\u5feb\u901f",
+  presetAccurate: "\u9ad8\u51c6\u786e\u7387",
+  recognitionProfile: "\u8bc6\u522b\u6a21\u5f0f",
+  profileFast: "\u5feb\u901f",
+  profileBalanced: "\u5e73\u8861",
+  profileAccurate: "\u7cbe\u51c6",
+  profileAsmr: "ASMR",
+  beamSize: "Beam Size",
+  vadFilter: "\u542f\u7528 VAD \u9759\u97f3\u8fc7\u6ee4",
+  noSpeechThreshold: "\u9759\u97f3\u9608\u503c",
+  conditionOnPreviousText: "\u4f7f\u7528\u4e0a\u4e0b\u6587\u7eed\u5199",
+  initialPrompt: "\u521d\u59cb\u63d0\u793a\u8bcd",
+  initialPromptPlaceholder: "\u53ef\u9009\uff0c\u4f8b\u5982\uff1a\u8fd9\u662f\u65e5\u8bed ASMR \u8033\u8bed\u548c\u53e3\u8bed\u5185\u5bb9\u3002",
+  whisperAdvancedHint: "ASMR \u63d0\u793a\u8bcd\u9ed8\u8ba4\u4e0d\u542f\u7528\uff1b\u53ea\u6709\u586b\u5199\u540e\u624d\u4f1a\u4f20\u7ed9 Whisper\u3002",
   aiTranslation: "AI \u7ffb\u8bd1",
   aiOnlyHint: "\u65e5\u8bed\u7ffb\u8bd1\u4ec5\u4f7f\u7528 AI \u63a5\u53e3\uff1b\u672a\u914d\u7f6e API Key \u65f6\u65e5\u8bed\u4efb\u52a1\u4f1a\u5931\u8d25\u5e76\u63d0\u793a\u914d\u7f6e\u3002",
   deepseekPreset: "DeepSeek V4 Pro \u9884\u8bbe",
@@ -158,6 +214,8 @@ const missingDesktopApi = {
   }),
   getSettings: async (): Promise<AppSettings> => DEEPSEEK_PRESET,
   updateSettings: async (settings: AppSettings): Promise<AppSettings> => settings,
+  getHistory: async (): Promise<HistoryTask[]> => [],
+  upsertHistory: async (task: HistoryTask) => ({ saved: Boolean(task), id: task.id }),
   retryDependencies: async () => ({ ok: false }),
   cancelTranscription: async () => ({ canceled: false }),
   startTranscription: async () => {
@@ -165,6 +223,9 @@ const missingDesktopApi = {
   },
   saveTxt: async () => {
     throw new Error("\u8bf7\u5728 Electron \u684c\u9762\u5ba2\u6237\u7aef\u4e2d\u4fdd\u5b58\u6587\u4ef6\u3002");
+  },
+  exportBatch: async () => {
+    throw new Error("\u8bf7\u5728 Electron \u684c\u9762\u5ba2\u6237\u7aef\u4e2d\u5bfc\u51fa\u6587\u4ef6\u3002");
   },
   onProgress: () => () => undefined,
   onDone: () => () => undefined,
@@ -194,6 +255,20 @@ function formatTimestamp(seconds: number) {
     .padStart(3, "0")}`;
 }
 
+function formatDuration(seconds: number | null | undefined) {
+  if (!Number.isFinite(seconds || 0) || !seconds || seconds < 0) {
+    return "--";
+  }
+  const totalSeconds = Math.round(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const rest = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${rest.toString().padStart(2, "0")}`;
+  }
+  return `${minutes}:${rest.toString().padStart(2, "0")}`;
+}
+
 function formatSrtTimestamp(seconds: number) {
   return formatTimestamp(seconds).replace(".", ",");
 }
@@ -203,7 +278,7 @@ function buildTxt(result: TranscriptionResult | null | undefined) {
   return result.segments
     .map((segment) => {
       const timeRange = `[${formatTimestamp(segment.start)} - ${formatTimestamp(segment.end)}]`;
-      if (segment.translatedText) {
+      if (segment.translatedText !== null && segment.translatedText !== undefined) {
         return `${timeRange}\n${text.source}\uff1a${segment.sourceText}\n${text.translation}\uff1a${segment.translatedText}`;
       }
       return `${timeRange}\n${segment.sourceText}`;
@@ -215,12 +290,16 @@ function buildSrt(result: TranscriptionResult | null | undefined) {
   if (!result) return "";
   return result.segments
     .map((segment, index) => {
-      const subtitleText = segment.translatedText
+      const subtitleText = segment.translatedText !== null && segment.translatedText !== undefined
         ? `${segment.sourceText}\n${segment.translatedText}`
         : segment.sourceText;
       return `${index + 1}\n${formatSrtTimestamp(segment.start)} --> ${formatSrtTimestamp(segment.end)}\n${subtitleText}`;
     })
     .join("\n\n");
+}
+
+function exportBaseName(task: QueueTask) {
+  return task.file.name.replace(/\.[^.]+$/, "") || "transcription";
 }
 
 function hardwareSummary(status: HardwareStatus | null) {
@@ -243,6 +322,14 @@ function mergeSettings(settings?: Partial<AppSettings> | null): AppSettings {
       ...DEEPSEEK_PRESET.network,
       ...(settings?.network || {}),
     },
+    audioEnhancement: {
+      ...DEEPSEEK_PRESET.audioEnhancement,
+      ...(settings?.audioEnhancement || {}),
+    },
+    whisperAdvanced: {
+      ...DEEPSEEK_PRESET.whisperAdvanced,
+      ...(settings?.whisperAdvanced || {}),
+    },
   };
   merged.translationBackend = "ai";
   return merged;
@@ -255,6 +342,16 @@ function parseNumericInput(value: string, fallback: number) {
 
 function statusLabel(status: QueueTaskStatus) {
   return text[status];
+}
+
+function mergeStageTiming(current: Record<string, number> | undefined, progress: TranscriptionProgress) {
+  if (!progress.stage || typeof progress.stageElapsedSeconds !== "number") {
+    return current;
+  }
+  return {
+    ...(current || {}),
+    [progress.stage]: progress.stageElapsedSeconds,
+  };
 }
 
 function MediaIcon({ extension }: { extension: string }) {
@@ -271,6 +368,139 @@ function createTask(file: AudioFile): QueueTask {
     error: null,
   };
 }
+
+function createHistoryQueueTask(task: HistoryTask): QueueTask {
+  return {
+    id: `history-${task.id}`,
+    historyId: task.id,
+    file: task.file,
+    status: "done",
+    progress: { stage: "done", message: text.historyLoaded, percent: 100 },
+    result: task.result,
+    error: null,
+    completedAt: task.completedAt,
+  };
+}
+
+function buildHistoryTask(task: QueueTask): HistoryTask | null {
+  if (!task.result) return null;
+  return {
+    id: task.historyId || `${task.file.path}-${task.completedAt || Date.now()}`,
+    file: task.file,
+    result: task.result,
+    completedAt: task.completedAt || new Date().toISOString(),
+  };
+}
+
+type RecognitionPreset = {
+  key: string;
+  label: string;
+  audioEnhancement: AudioEnhancementSettings;
+  whisperAdvanced: Omit<WhisperAdvancedSettings, "initialPrompt">;
+};
+
+const RECOGNITION_PRESETS: RecognitionPreset[] = [
+  {
+    key: "general",
+    label: text.presetGeneral,
+    audioEnhancement: {
+      enabled: false,
+      normalize: true,
+      compression: true,
+      denoise: false,
+      mono: true,
+      targetPeak: 0.9,
+      noiseGateDb: -48,
+    },
+    whisperAdvanced: {
+      profile: "balanced",
+      beamSize: 5,
+      vadFilter: true,
+      noSpeechThreshold: 0.6,
+      conditionOnPreviousText: false,
+    },
+  },
+  {
+    key: "asmr",
+    label: text.presetAsmr,
+    audioEnhancement: {
+      enabled: true,
+      normalize: true,
+      compression: true,
+      denoise: false,
+      mono: true,
+      targetPeak: 0.9,
+      noiseGateDb: -50,
+    },
+    whisperAdvanced: {
+      profile: "asmr",
+      beamSize: 8,
+      vadFilter: false,
+      noSpeechThreshold: 0.45,
+      conditionOnPreviousText: true,
+    },
+  },
+  {
+    key: "noisy",
+    label: text.presetNoisy,
+    audioEnhancement: {
+      enabled: true,
+      normalize: true,
+      compression: true,
+      denoise: true,
+      mono: true,
+      targetPeak: 0.88,
+      noiseGateDb: -50,
+    },
+    whisperAdvanced: {
+      profile: "asmr",
+      beamSize: 8,
+      vadFilter: false,
+      noSpeechThreshold: 0.48,
+      conditionOnPreviousText: true,
+    },
+  },
+  {
+    key: "fast",
+    label: text.presetFast,
+    audioEnhancement: {
+      enabled: true,
+      normalize: true,
+      compression: false,
+      denoise: false,
+      mono: true,
+      targetPeak: 0.9,
+      noiseGateDb: -48,
+    },
+    whisperAdvanced: {
+      profile: "fast",
+      beamSize: 3,
+      vadFilter: true,
+      noSpeechThreshold: 0.6,
+      conditionOnPreviousText: false,
+    },
+  },
+  {
+    key: "accurate",
+    label: text.presetAccurate,
+    audioEnhancement: {
+      enabled: true,
+      normalize: true,
+      compression: true,
+      denoise: false,
+      mono: true,
+      targetPeak: 0.9,
+      noiseGateDb: -50,
+    },
+    whisperAdvanced: {
+      profile: "accurate",
+      beamSize: 10,
+      vadFilter: true,
+      noSpeechThreshold: 0.5,
+      conditionOnPreviousText: true,
+    },
+  },
+];
 
 function waitForQueueResume(pausedRef: React.MutableRefObject<boolean>) {
   if (!pausedRef.current) {
@@ -309,6 +539,7 @@ function App() {
   const settingsRef = useRef(settings);
   const whisperModelRef = useRef(whisperModel);
   const computeDeviceRef = useRef(computeDevice);
+  const resultScrollRef = useRef<HTMLDivElement | null>(null);
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId) || tasks[0] || null,
@@ -316,6 +547,7 @@ function App() {
   );
   const txtContent = useMemo(() => buildTxt(selectedTask?.result), [selectedTask]);
   const srtContent = useMemo(() => buildSrt(selectedTask?.result), [selectedTask]);
+  const doneTasks = useMemo(() => tasks.filter((task) => task.result), [tasks]);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -334,8 +566,23 @@ function App() {
   }, [tasks]);
 
   useEffect(() => {
+    if (resultScrollRef.current) {
+      resultScrollRef.current.scrollTop = 0;
+    }
+  }, [selectedTaskId]);
+
+  useEffect(() => {
     desktopApi.getModelStatus().then(setModelStatus).catch((err) => setError(err instanceof Error ? err.message : String(err)));
     desktopApi.getHardwareStatus().then(setHardwareStatus).catch(() => undefined);
+    desktopApi
+      .getHistory()
+      .then((history) => {
+        const historyTasks = history.map(createHistoryQueueTask);
+        if (!historyTasks.length) return;
+        setTasks((current) => [...current, ...historyTasks]);
+        setSelectedTaskId((current) => current || historyTasks[0].id);
+      })
+      .catch(() => undefined);
     desktopApi
       .getSettings()
       .then((nextSettings) => {
@@ -350,19 +597,52 @@ function App() {
       const taskId = currentTaskIdRef.current;
       if (!taskId) return;
       setTasks((current) =>
-        current.map((task) => (task.id === taskId ? { ...task, progress: nextProgress, status: "running" } : task)),
+        current.map((task) =>
+          task.id === taskId
+            ? {
+                ...task,
+                progress: nextProgress,
+                stageTimings: mergeStageTiming(task.stageTimings, nextProgress),
+                status: "running",
+              }
+            : task,
+        ),
       );
     });
     const offDone = desktopApi.onDone((nextResult) => {
       const taskId = currentTaskIdRef.current;
       if (!taskId) return;
+      const completedAt = new Date().toISOString();
       setTasks((current) =>
         current.map((task) =>
           task.id === taskId
-            ? { ...task, status: "done", result: nextResult, progress: { stage: "done", message: text.done, percent: 100 } }
+            ? {
+                ...task,
+                status: "done",
+                result: nextResult,
+                completedAt,
+                progress: { ...task.progress, stage: "done", message: text.done, percent: 100 },
+                }
             : task,
         ),
       );
+      const completedTask = tasksRef.current.find((task) => task.id === taskId);
+      if (completedTask) {
+        const historyTask: HistoryTask = {
+          id: completedTask.historyId || `${completedTask.file.path}-${completedAt}`,
+          file: completedTask.file,
+          result: nextResult,
+          completedAt,
+        };
+        desktopApi
+          .upsertHistory(historyTask)
+          .then((response) => {
+            setTasks((current) =>
+              current.map((task) => (task.id === taskId ? { ...task, historyId: response.id, completedAt } : task)),
+            );
+          })
+          .catch(() => undefined);
+      }
       desktopApi.getModelStatus().then(setModelStatus).catch(() => undefined);
       desktopApi.getHardwareStatus().then(setHardwareStatus).catch(() => undefined);
       taskResolverRef.current?.(true);
@@ -398,7 +678,13 @@ function App() {
         setGlobalProgress(nextProgress);
         return;
       }
-      setTasks((current) => current.map((task) => (task.id === taskId ? { ...task, progress: nextProgress } : task)));
+      setTasks((current) =>
+        current.map((task) =>
+          task.id === taskId
+            ? { ...task, progress: nextProgress, stageTimings: mergeStageTiming(task.stageTimings, nextProgress) }
+            : task,
+        ),
+      );
     });
 
     return () => {
@@ -447,6 +733,8 @@ function App() {
         translationModel: "ai-chat-completions",
         translationBackend: "ai",
         aiTranslationConfig: settingsRef.current.aiTranslation,
+        audioEnhancement: settingsRef.current.audioEnhancement,
+        whisperAdvanced: settingsRef.current.whisperAdvanced,
         computeDevice: computeDeviceRef.current,
       });
       await waitForResult;
@@ -475,7 +763,7 @@ function App() {
       for (const task of queuedTasks) {
         await waitForQueueResume(queuePausedRef);
         const latestTask = tasksRef.current.find((item) => item.id === task.id);
-        if (latestTask?.status === "canceled") {
+        if (!latestTask || latestTask.status === "canceled") {
           continue;
         }
         await runTask(task);
@@ -516,6 +804,48 @@ function App() {
     );
   }
 
+  function removeTask(taskId: string) {
+    const target = tasksRef.current.find((task) => task.id === taskId);
+    if (!target || target.status === "running") {
+      return;
+    }
+    const nextTasks = tasksRef.current.filter((task) => task.id !== taskId);
+    setTasks(nextTasks);
+    if (selectedTaskId === taskId) {
+      setSelectedTaskId(nextTasks[0]?.id || null);
+    }
+  }
+
+  function updateSegmentText(taskId: string, segmentIndex: number, field: "sourceText" | "translatedText", value: string) {
+    let updatedTask: QueueTask | null = null;
+    setTasks((current) =>
+      current.map((task) => {
+        if (task.id !== taskId || !task.result) {
+          return task;
+        }
+        const nextSegments = task.result.segments.map((segment, index) =>
+          index === segmentIndex ? { ...segment, [field]: value } : segment,
+        );
+        updatedTask = {
+          ...task,
+          result: {
+            ...task.result,
+            segments: nextSegments,
+          },
+        };
+        return updatedTask;
+      }),
+    );
+
+    window.setTimeout(() => {
+      const task = updatedTask;
+      if (!task) return;
+      const historyTask = buildHistoryTask(task);
+      if (!historyTask) return;
+      desktopApi.upsertHistory(historyTask).catch(() => undefined);
+    }, 0);
+  }
+
   function updateAiTranslation(patch: Partial<AiTranslationConfig>) {
     setSettings((current) => ({
       ...current,
@@ -532,6 +862,28 @@ function App() {
       ...current,
       network: {
         ...current.network,
+        ...patch,
+      },
+    }));
+    setSettingsSaved(false);
+  }
+
+  function updateAudioEnhancement(patch: Partial<AudioEnhancementSettings>) {
+    setSettings((current) => ({
+      ...current,
+      audioEnhancement: {
+        ...current.audioEnhancement,
+        ...patch,
+      },
+    }));
+    setSettingsSaved(false);
+  }
+
+  function updateWhisperAdvanced(patch: Partial<WhisperAdvancedSettings>) {
+    setSettings((current) => ({
+      ...current,
+      whisperAdvanced: {
+        ...current.whisperAdvanced,
         ...patch,
       },
     }));
@@ -589,6 +941,8 @@ function App() {
         proxyPort: current.aiTranslation.proxyPort,
       },
       network: current.network,
+      audioEnhancement: current.audioEnhancement,
+      whisperAdvanced: current.whisperAdvanced,
     }));
     setSettingsSaved(false);
   }
@@ -598,7 +952,7 @@ function App() {
       setError(text.noResultToSave);
       return;
     }
-    const baseName = selectedTask.file.name.replace(/\.[^.]+$/, "") || "transcription";
+    const baseName = exportBaseName(selectedTask);
     const response = await desktopApi.saveTxt({
       content: txtContent,
       defaultFileName: `${baseName}.txt`,
@@ -614,7 +968,7 @@ function App() {
       setError(text.noResultToSave);
       return;
     }
-    const baseName = selectedTask.file.name.replace(/\.[^.]+$/, "") || "transcription";
+    const baseName = exportBaseName(selectedTask);
     const response = await desktopApi.saveTxt({
       content: srtContent,
       defaultFileName: `${baseName}.srt`,
@@ -625,6 +979,32 @@ function App() {
     }
   }
 
+  async function exportAll(format: "txt" | "srt") {
+    const items = doneTasks
+      .map((task) => {
+        const content = format === "txt" ? buildTxt(task.result) : buildSrt(task.result);
+        return {
+          content,
+          fileName: `${exportBaseName(task)}.${format}`,
+        };
+      })
+      .filter((item) => item.content.trim());
+
+    if (!items.length) {
+      setError(text.noBatchResult);
+      return;
+    }
+
+    try {
+      const response = await desktopApi.exportBatch({ items });
+      if (response.saved && response.directory) {
+        setSavedPath(`${response.directory} (${text.batchSaved}${response.count || items.length})`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   const queueSummary = `${whisperModel} / ${computeDevice.toUpperCase()} / AI / ${
     settings.aiTranslation.apiKey ? text.aiConfigured : text.aiNotConfigured
   }`;
@@ -632,10 +1012,48 @@ function App() {
   return (
     <main className="shell">
       <section className="topbar appToolbar">
-        <div>
+        <div className="brandBlock">
           <p className="eyebrow">{text.appSubtitle}</p>
           <h1>ASMR Trans</h1>
           <p className="toolbarSummary">{queueSummary}</p>
+        </div>
+        <div className="commandArea">
+          <div className="toolbarActions primaryActions">
+            <button className="secondaryButton" onClick={selectMedia} disabled={isQueueRunning}>
+              <FolderOpen size={18} />
+              {text.selectMedia}
+            </button>
+            <button className="primaryButton toolbarPrimary" onClick={startQueue} disabled={isQueueRunning}>
+              {isQueueRunning ? <Loader2 className="spin" size={18} /> : <Play size={18} />}
+              {text.startQueue}
+            </button>
+            <button className="secondaryButton" onClick={isQueuePaused ? resumeQueue : pauseQueue} disabled={!isQueueRunning}>
+              {isQueuePaused ? <RotateCcw size={18} /> : <Pause size={18} />}
+              {isQueuePaused ? text.resumeQueue : text.pauseQueue}
+            </button>
+            <button
+              className="secondaryButton dangerButton"
+              onClick={() => void cancelTask(selectedTask?.id || null)}
+              disabled={!selectedTask || !["queued", "running"].includes(selectedTask.status)}
+            >
+              <Square size={16} />
+              {text.cancelTask}
+            </button>
+          </div>
+          <div className="toolbarActions secondaryActions">
+            <button className="secondaryButton" onClick={() => void exportAll("txt")} disabled={!doneTasks.length}>
+              <Save size={18} />
+              {text.exportAllTxt}
+            </button>
+            <button className="secondaryButton" onClick={() => void exportAll("srt")} disabled={!doneTasks.length}>
+              <Download size={18} />
+              {text.exportAllSrt}
+            </button>
+            <button className="secondaryButton iconButton" onClick={() => setIsSettingsOpen(true)} disabled={isQueueRunning}>
+              <Settings size={18} />
+              {text.settings}
+            </button>
+          </div>
           {globalProgress && (
             <div className="globalProgress">
               <div className="progressTrack">
@@ -644,32 +1062,6 @@ function App() {
               <span>{globalProgress.message}</span>
             </div>
           )}
-        </div>
-        <div className="toolbarActions">
-          <button className="secondaryButton" onClick={selectMedia} disabled={isQueueRunning}>
-            <FolderOpen size={18} />
-            {text.selectMedia}
-          </button>
-          <button className="primaryButton toolbarPrimary" onClick={startQueue} disabled={isQueueRunning}>
-            {isQueueRunning ? <Loader2 className="spin" size={18} /> : <Play size={18} />}
-            {text.startQueue}
-          </button>
-          <button className="secondaryButton" onClick={isQueuePaused ? resumeQueue : pauseQueue} disabled={!isQueueRunning}>
-            {isQueuePaused ? <RotateCcw size={18} /> : <Pause size={18} />}
-            {isQueuePaused ? text.resumeQueue : text.pauseQueue}
-          </button>
-          <button
-            className="secondaryButton dangerButton"
-            onClick={() => void cancelTask(selectedTask?.id || null)}
-            disabled={!selectedTask || !["queued", "running"].includes(selectedTask.status)}
-          >
-            <Square size={16} />
-            {text.cancelTask}
-          </button>
-          <button className="secondaryButton iconButton" onClick={() => setIsSettingsOpen(true)} disabled={isQueueRunning}>
-            <Settings size={18} />
-            {text.settings}
-          </button>
         </div>
       </section>
 
@@ -682,10 +1074,18 @@ function App() {
           <div className="taskList">
             {!tasks.length && <div className="emptyState compactEmpty">{text.emptyQueue}</div>}
             {tasks.map((task) => (
-              <button
+              <div
                 key={task.id}
                 className={`taskItem ${selectedTask?.id === task.id ? "selected" : ""}`}
                 onClick={() => setSelectedTaskId(task.id)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setSelectedTaskId(task.id);
+                  }
+                }}
               >
                 <MediaIcon extension={task.file.extension} />
                 <div className="taskMeta">
@@ -693,6 +1093,7 @@ function App() {
                   <span>
                     {task.file.extension.toUpperCase()} - {formatBytes(task.file.size)}
                   </span>
+                  {task.completedAt && <span>{`${text.historyLoaded} - ${new Date(task.completedAt).toLocaleString()}`}</span>}
                   {task.error && <em>{task.error}</em>}
                 </div>
                 <div className={`taskStatus ${task.status}`}>
@@ -700,7 +1101,19 @@ function App() {
                   {statusLabel(task.status)}
                   {typeof task.progress?.percent === "number" ? ` ${task.progress.percent}%` : ""}
                 </div>
-              </button>
+                <button
+                  className="taskRemoveButton"
+                  title={text.removeTask}
+                  aria-label={text.removeTask}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    removeTask(task.id);
+                  }}
+                  disabled={task.status === "running"}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
             ))}
           </div>
         </section>
@@ -716,6 +1129,7 @@ function App() {
                     } - ${selectedTask.result.segments.length} ${text.segments}`
                   : selectedTask?.progress?.message || text.emptyResult}
               </p>
+              {selectedTask && <ProgressMetrics task={selectedTask} />}
             </div>
             <div className="exportActions">
               <button className="secondaryButton" onClick={saveSelectedTxt} disabled={!selectedTask?.result}>
@@ -729,26 +1143,40 @@ function App() {
             </div>
           </div>
 
-          <div className="segments">
+          <div className="segments" ref={resultScrollRef}>
             {!selectedTask?.result && <div className="emptyState">{selectedTask?.error || text.emptyResult}</div>}
             {selectedTask?.result?.segments.map((segment, index) => (
               <article className="segment" key={`${segment.start}-${segment.end}-${index}`}>
                 <time>
                   {formatTimestamp(segment.start)} - {formatTimestamp(segment.end)}
                 </time>
-                {segment.translatedText ? (
+                {segment.translatedText !== null && segment.translatedText !== undefined ? (
                   <>
-                    <p>
+                    <label className="segmentField">
                       <span>{text.source}</span>
-                      {segment.sourceText}
-                    </p>
-                    <p>
+                      <textarea
+                        value={segment.sourceText}
+                        onChange={(event) => updateSegmentText(selectedTask.id, index, "sourceText", event.target.value)}
+                        rows={3}
+                      />
+                    </label>
+                    <label className="segmentField">
                       <span>{text.translation}</span>
-                      {segment.translatedText}
-                    </p>
+                      <textarea
+                        value={segment.translatedText}
+                        onChange={(event) => updateSegmentText(selectedTask.id, index, "translatedText", event.target.value)}
+                        rows={3}
+                      />
+                    </label>
                   </>
                 ) : (
-                  <p>{segment.sourceText}</p>
+                  <label className="segmentField">
+                    <textarea
+                      value={segment.sourceText}
+                      onChange={(event) => updateSegmentText(selectedTask.id, index, "sourceText", event.target.value)}
+                      rows={3}
+                    />
+                  </label>
                 )}
               </article>
             ))}
@@ -791,6 +1219,8 @@ function App() {
         settings={settings}
         updateAiTranslation={updateAiTranslation}
         updateNetwork={updateNetwork}
+        updateAudioEnhancement={updateAudioEnhancement}
+        updateWhisperAdvanced={updateWhisperAdvanced}
         applyDeepSeekPreset={applyDeepSeekPreset}
         saveSettings={saveSettings}
         retryDependencies={retryDependencies}
@@ -813,6 +1243,8 @@ function SettingsDrawer({
   settings,
   updateAiTranslation,
   updateNetwork,
+  updateAudioEnhancement,
+  updateWhisperAdvanced,
   applyDeepSeekPreset,
   saveSettings,
   retryDependencies,
@@ -830,11 +1262,21 @@ function SettingsDrawer({
   settings: AppSettings;
   updateAiTranslation: (patch: Partial<AiTranslationConfig>) => void;
   updateNetwork: (patch: Partial<NetworkSettings>) => void;
+  updateAudioEnhancement: (patch: Partial<AudioEnhancementSettings>) => void;
+  updateWhisperAdvanced: (patch: Partial<WhisperAdvancedSettings>) => void;
   applyDeepSeekPreset: () => void;
   saveSettings: () => void;
   retryDependencies: () => void;
   settingsSaved: boolean;
 }) {
+  function applyRecognitionPreset(preset: RecognitionPreset) {
+    updateAudioEnhancement(preset.audioEnhancement);
+    updateWhisperAdvanced({
+      ...preset.whisperAdvanced,
+      initialPrompt: settings.whisperAdvanced.initialPrompt,
+    });
+  }
+
   return (
     <aside className={`settingsDrawer ${open ? "open" : ""}`} aria-hidden={!open}>
       <div className="drawerHeader">
@@ -848,6 +1290,26 @@ function SettingsDrawer({
       </div>
 
       <div className="drawerBody">
+        <div className="statusBlock">
+          <div className="blockTitleRow">
+            <h3>{text.recognitionPresets}</h3>
+            <SlidersHorizontal size={16} />
+          </div>
+          <div className="presetGrid">
+            {RECOGNITION_PRESETS.map((preset) => (
+              <button
+                key={preset.key}
+                className="secondaryButton presetButton"
+                onClick={() => applyRecognitionPreset(preset)}
+                disabled={isRunning}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <p className="hint">{text.whisperAdvancedHint}</p>
+        </div>
+
         <div className="statusBlock">
           <h3>{text.modelChoice}</h3>
           <select
@@ -879,6 +1341,148 @@ function SettingsDrawer({
             ))}
           </div>
           <p className="hint multiline">{hardwareSummary(hardwareStatus)}</p>
+        </div>
+
+        <div className="statusBlock">
+          <div className="blockTitleRow">
+            <h3>{text.audioEnhancement}</h3>
+            <SlidersHorizontal size={16} />
+          </div>
+          <p className="hint">{text.audioEnhancementHint}</p>
+          <label className="toggleField">
+            <input
+              type="checkbox"
+              checked={settings.audioEnhancement.enabled}
+              onChange={(event) => updateAudioEnhancement({ enabled: event.target.checked })}
+              disabled={isRunning}
+            />
+            <span>{text.enableAudioEnhancement}</span>
+          </label>
+          <div className="fieldGrid">
+            <label className="toggleField">
+              <input
+                type="checkbox"
+                checked={settings.audioEnhancement.normalize}
+                onChange={(event) => updateAudioEnhancement({ normalize: event.target.checked })}
+                disabled={isRunning || !settings.audioEnhancement.enabled}
+              />
+              <span>{text.normalizeAudio}</span>
+            </label>
+            <label className="toggleField">
+              <input
+                type="checkbox"
+                checked={settings.audioEnhancement.compression}
+                onChange={(event) => updateAudioEnhancement({ compression: event.target.checked })}
+                disabled={isRunning || !settings.audioEnhancement.enabled}
+              />
+              <span>{text.compressAudio}</span>
+            </label>
+            <label className="toggleField">
+              <input
+                type="checkbox"
+                checked={settings.audioEnhancement.denoise}
+                onChange={(event) => updateAudioEnhancement({ denoise: event.target.checked })}
+                disabled={isRunning || !settings.audioEnhancement.enabled}
+              />
+              <span>{text.denoiseAudio}</span>
+            </label>
+            <label className="toggleField">
+              <input
+                type="checkbox"
+                checked={settings.audioEnhancement.mono}
+                onChange={(event) => updateAudioEnhancement({ mono: event.target.checked })}
+                disabled={isRunning || !settings.audioEnhancement.enabled}
+              />
+              <span>{text.monoAudio}</span>
+            </label>
+            <NumberField
+              label={text.targetPeak}
+              value={settings.audioEnhancement.targetPeak}
+              disabled={isRunning || !settings.audioEnhancement.enabled}
+              step="0.05"
+              onChange={(targetPeak) => updateAudioEnhancement({ targetPeak })}
+            />
+            <NumberField
+              label={text.noiseGateDb}
+              value={settings.audioEnhancement.noiseGateDb}
+              disabled={isRunning || !settings.audioEnhancement.enabled || !settings.audioEnhancement.denoise}
+              onChange={(noiseGateDb) => updateAudioEnhancement({ noiseGateDb })}
+            />
+          </div>
+        </div>
+
+        <div className="statusBlock">
+          <div className="blockTitleRow">
+            <h3>{text.whisperAdvanced}</h3>
+            <SlidersHorizontal size={16} />
+          </div>
+          <p className="hint">{text.whisperAdvancedHint}</p>
+          <label className="field">
+            <span>{text.recognitionProfile}</span>
+            <select
+              className="modelSelect"
+              value={settings.whisperAdvanced.profile}
+              onChange={(event) => {
+                const profile = event.target.value as WhisperAdvancedSettings["profile"];
+                const presets: Record<WhisperAdvancedSettings["profile"], Partial<WhisperAdvancedSettings>> = {
+                  fast: { profile, beamSize: 3, vadFilter: true, noSpeechThreshold: 0.6, conditionOnPreviousText: false },
+                  balanced: { profile, beamSize: 5, vadFilter: true, noSpeechThreshold: 0.6, conditionOnPreviousText: false },
+                  accurate: { profile, beamSize: 8, vadFilter: true, noSpeechThreshold: 0.55, conditionOnPreviousText: true },
+                  asmr: { profile, beamSize: 8, vadFilter: false, noSpeechThreshold: 0.45, conditionOnPreviousText: true },
+                };
+                updateWhisperAdvanced(presets[profile]);
+              }}
+              disabled={isRunning}
+            >
+              <option value="fast">{text.profileFast}</option>
+              <option value="balanced">{text.profileBalanced}</option>
+              <option value="accurate">{text.profileAccurate}</option>
+              <option value="asmr">{text.profileAsmr}</option>
+            </select>
+          </label>
+          <div className="fieldGrid">
+            <NumberField
+              label={text.beamSize}
+              value={settings.whisperAdvanced.beamSize}
+              disabled={isRunning}
+              onChange={(beamSize) => updateWhisperAdvanced({ beamSize, profile: settings.whisperAdvanced.profile })}
+            />
+            <NumberField
+              label={text.noSpeechThreshold}
+              value={settings.whisperAdvanced.noSpeechThreshold}
+              disabled={isRunning}
+              step="0.05"
+              onChange={(noSpeechThreshold) => updateWhisperAdvanced({ noSpeechThreshold })}
+            />
+            <label className="toggleField">
+              <input
+                type="checkbox"
+                checked={settings.whisperAdvanced.vadFilter}
+                onChange={(event) => updateWhisperAdvanced({ vadFilter: event.target.checked })}
+                disabled={isRunning}
+              />
+              <span>{text.vadFilter}</span>
+            </label>
+            <label className="toggleField">
+              <input
+                type="checkbox"
+                checked={settings.whisperAdvanced.conditionOnPreviousText}
+                onChange={(event) => updateWhisperAdvanced({ conditionOnPreviousText: event.target.checked })}
+                disabled={isRunning}
+              />
+              <span>{text.conditionOnPreviousText}</span>
+            </label>
+          </div>
+          <label className="field">
+            <span>{text.initialPrompt}</span>
+            <textarea
+              value={settings.whisperAdvanced.initialPrompt}
+              onChange={(event) => updateWhisperAdvanced({ initialPrompt: event.target.value })}
+              disabled={isRunning}
+              placeholder={text.initialPromptPlaceholder}
+              rows={3}
+            />
+          </label>
         </div>
 
         <div className="statusBlock">
@@ -1109,6 +1713,42 @@ function StatusRow({
       {ready ? <CheckCircle2 size={18} /> : <Download size={18} />}
       <span>{label}</span>
       <strong>{ready ? readyText : notReadyText}</strong>
+    </div>
+  );
+}
+
+function ProgressMetrics({ task }: { task: QueueTask }) {
+  const progress = task.progress;
+  const timings = Object.entries(task.stageTimings || {}).filter(([, seconds]) => seconds > 0);
+  if (!progress && !timings.length) {
+    return null;
+  }
+
+  return (
+    <div className="progressMetrics">
+      {typeof progress?.speedFactor === "number" && (
+        <span>
+          {text.realtimeSpeed}: {progress.speedFactor.toFixed(2)}x
+        </span>
+      )}
+      {typeof progress?.etaSeconds === "number" && (
+        <span>
+          {text.eta}: {formatDuration(progress.etaSeconds)}
+        </span>
+      )}
+      {typeof progress?.elapsedSeconds === "number" && (
+        <span>
+          {text.elapsed}: {formatDuration(progress.elapsedSeconds)}
+        </span>
+      )}
+      {timings.length > 0 && (
+        <span>
+          {text.stageTiming}:{" "}
+          {timings
+            .map(([stage, seconds]) => `${stage} ${formatDuration(seconds)}`)
+            .join(" / ")}
+        </span>
+      )}
     </div>
   );
 }

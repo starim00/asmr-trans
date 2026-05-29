@@ -45,6 +45,23 @@ const DEFAULT_SETTINGS = {
     proxyHost: "127.0.0.1",
     proxyPort: "7890",
   },
+  audioEnhancement: {
+    enabled: false,
+    normalize: true,
+    compression: true,
+    denoise: false,
+    mono: true,
+    targetPeak: 0.9,
+    noiseGateDb: -48,
+  },
+  whisperAdvanced: {
+    profile: "balanced",
+    beamSize: 5,
+    vadFilter: true,
+    noSpeechThreshold: 0.6,
+    conditionOnPreviousText: false,
+    initialPrompt: "",
+  },
 };
 
 function getModelsDir() {
@@ -53,6 +70,10 @@ function getModelsDir() {
 
 function getSettingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
+}
+
+function getHistoryPath() {
+  return path.join(app.getPath("userData"), "history.json");
 }
 
 function mergeSettings(settings = {}) {
@@ -66,6 +87,14 @@ function mergeSettings(settings = {}) {
     network: {
       ...DEFAULT_SETTINGS.network,
       ...(settings.network || {}),
+    },
+    audioEnhancement: {
+      ...DEFAULT_SETTINGS.audioEnhancement,
+      ...(settings.audioEnhancement || {}),
+    },
+    whisperAdvanced: {
+      ...DEFAULT_SETTINGS.whisperAdvanced,
+      ...(settings.whisperAdvanced || {}),
     },
   };
   merged.translationBackend = "ai";
@@ -89,6 +118,47 @@ function writeSettings(settings) {
   fs.mkdirSync(path.dirname(getSettingsPath()), { recursive: true });
   fs.writeFileSync(getSettingsPath(), JSON.stringify(nextSettings, null, 2), "utf8");
   return nextSettings;
+}
+
+function readHistory() {
+  const historyPath = getHistoryPath();
+  if (!fs.existsSync(historyPath)) {
+    return [];
+  }
+  try {
+    const value = JSON.parse(fs.readFileSync(historyPath, "utf8"));
+    return Array.isArray(value) ? value : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function writeHistory(history) {
+  fs.mkdirSync(path.dirname(getHistoryPath()), { recursive: true });
+  fs.writeFileSync(getHistoryPath(), JSON.stringify(history.slice(0, 200), null, 2), "utf8");
+  return history;
+}
+
+function upsertHistoryTask(task) {
+  if (!task || !task.file || !task.result) {
+    throw new Error("Invalid history task.");
+  }
+  const history = readHistory();
+  const id = task.id || `${task.file.path}-${Date.now()}`;
+  const nextTask = {
+    id,
+    file: task.file,
+    result: task.result,
+    completedAt: task.completedAt || new Date().toISOString(),
+  };
+  const filtered = history.filter((item) => item.id !== id);
+  writeHistory([nextTask, ...filtered]);
+  return nextTask;
+}
+
+function safeExportFileName(fileName) {
+  const baseName = path.basename(String(fileName || "transcription.txt"));
+  return baseName.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_") || "transcription.txt";
 }
 
 function hasModelFiles(modelPath) {
@@ -443,6 +513,15 @@ ipcMain.handle("settings:update", async (_event, settings) => {
   return writeSettings(settings || {});
 });
 
+ipcMain.handle("history:get", async () => {
+  return readHistory();
+});
+
+ipcMain.handle("history:upsert", async (_event, task) => {
+  const saved = upsertHistoryTask(task);
+  return { saved: true, id: saved.id };
+});
+
 ipcMain.handle("deps:retry", async () => {
   await ensurePythonDependencies();
   return { ok: true };
@@ -480,6 +559,14 @@ ipcMain.handle("transcribe:start", async (event, payload) => {
     translationModel: "ai-chat-completions",
     translationBackend: "ai",
     aiTranslationConfig,
+    audioEnhancement: {
+      ...savedSettings.audioEnhancement,
+      ...(payload.audioEnhancement || {}),
+    },
+    whisperAdvanced: {
+      ...savedSettings.whisperAdvanced,
+      ...(payload.whisperAdvanced || {}),
+    },
     computeDevice: payload.computeDevice || savedSettings.computeDevice || "auto",
     outputLanguage: "zh",
     modelsDir,
@@ -599,4 +686,39 @@ ipcMain.handle("export:txt", async (_event, payload) => {
 
   fs.writeFileSync(result.filePath, payload.content, "utf8");
   return { saved: true, path: result.filePath };
+});
+
+ipcMain.handle("export:batch", async (_event, payload) => {
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  const exportableItems = items.filter((item) => typeof item.content === "string" && item.content.trim());
+  if (!exportableItems.length) {
+    throw new Error("There is no completed transcription result to export.");
+  }
+
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Select export directory",
+    properties: ["openDirectory", "createDirectory"],
+  });
+
+  if (result.canceled || !result.filePaths[0]) {
+    return { saved: false };
+  }
+
+  const directory = result.filePaths[0];
+  fs.mkdirSync(directory, { recursive: true });
+  const usedNames = new Set();
+  for (const item of exportableItems) {
+    const parsed = path.parse(safeExportFileName(item.fileName));
+    const extension = parsed.ext || ".txt";
+    let candidate = `${parsed.name || "transcription"}${extension}`;
+    let index = 2;
+    while (usedNames.has(candidate.toLowerCase()) || fs.existsSync(path.join(directory, candidate))) {
+      candidate = `${parsed.name || "transcription"}-${index}${extension}`;
+      index += 1;
+    }
+    usedNames.add(candidate.toLowerCase());
+    fs.writeFileSync(path.join(directory, candidate), item.content, "utf8");
+  }
+
+  return { saved: true, directory, count: exportableItems.length };
 });

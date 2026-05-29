@@ -21,6 +21,9 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
 os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "120")
 
+WORKER_STARTED_AT = time.monotonic()
+STAGE_STARTED_AT = {}
+
 
 def find_dll(name):
     for directory in os.environ.get("PATH", "").split(os.pathsep):
@@ -51,10 +54,18 @@ def emit(message_type, payload):
     sys.stdout.flush()
 
 
-def progress(stage, message, percent=None):
+def progress(stage, message, percent=None, **extra):
+    now = time.monotonic()
+    if stage not in STAGE_STARTED_AT:
+        STAGE_STARTED_AT[stage] = now
     payload = {"stage": stage, "message": message}
     if percent is not None:
         payload["percent"] = percent
+    payload["elapsedSeconds"] = round(now - WORKER_STARTED_AT, 2)
+    payload["stageElapsedSeconds"] = round(now - STAGE_STARTED_AT[stage], 2)
+    for key, value in extra.items():
+        if value is not None:
+            payload[key] = value
     emit("progress", payload)
 
 
@@ -94,6 +105,7 @@ def check_dependencies():
         ("requests", "requests"),
         ("socks", "PySocks"),
         ("ctranslate2", "ctranslate2"),
+        ("numpy", "numpy"),
     ]
     for module_name, package_name in modules:
         try:
@@ -167,6 +179,75 @@ def inspect_media_audio(media_path):
     return {"audioStreamCount": len(audio_streams), "duration": duration}
 
 
+def clamp_float(value, default, minimum=None, maximum=None):
+    number = as_float(value, default)
+    if minimum is not None:
+        number = max(number, minimum)
+    if maximum is not None:
+        number = min(number, maximum)
+    return number
+
+
+def decode_media_to_mono_float32(media_path, sample_rate=16000):
+    import av
+    import numpy as np
+
+    chunks = []
+    with av.open(str(media_path), mode="r") as container:
+        audio_streams = [stream for stream in container.streams if stream.type == "audio"]
+        if not audio_streams:
+            raise RuntimeError(f"Media file has no readable audio stream: {Path(media_path).name}")
+        stream = audio_streams[0]
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=sample_rate)
+        for frame in container.decode(stream):
+            for resampled in resampler.resample(frame):
+                array = resampled.to_ndarray()
+                if array.ndim > 1:
+                    array = array.reshape(-1)
+                chunks.append(array.astype(np.float32) / 32768.0)
+
+    if not chunks:
+        raise RuntimeError(f"No audio samples could be decoded from: {Path(media_path).name}")
+    return np.concatenate(chunks).astype(np.float32, copy=False)
+
+
+def enhance_audio_samples(samples, config):
+    import numpy as np
+
+    audio = np.asarray(samples, dtype=np.float32)
+    if audio.size == 0:
+        return audio
+
+    if config.get("denoise"):
+        threshold = 10 ** (clamp_float(config.get("noiseGateDb"), -48, -80, -12) / 20)
+        audio = np.where(np.abs(audio) < threshold, 0.0, audio)
+
+    if config.get("compression"):
+        threshold = 0.22
+        ratio = 4.0
+        magnitude = np.abs(audio)
+        compressed = np.where(magnitude > threshold, threshold + (magnitude - threshold) / ratio, magnitude)
+        audio = np.sign(audio) * compressed
+
+    if config.get("normalize"):
+        target_peak = clamp_float(config.get("targetPeak"), 0.9, 0.1, 0.99)
+        peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+        if peak > 0:
+            audio = audio * min(target_peak / peak, 12.0)
+
+    return np.clip(audio, -1.0, 1.0).astype(np.float32, copy=False)
+
+
+def prepare_audio_input(media_path, config):
+    if not config.get("enabled"):
+        return media_path
+    progress("preprocess", "Enhancing audio before transcription...", 8)
+    samples = decode_media_to_mono_float32(media_path)
+    enhanced = enhance_audio_samples(samples, config)
+    progress("preprocess", "Audio enhancement ready.", 18)
+    return enhanced
+
+
 def as_int(value, default):
     try:
         if value == "":
@@ -176,6 +257,14 @@ def as_int(value, default):
         return default
 
 
+def as_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def as_float(value, default):
     try:
         if value == "":
@@ -183,6 +272,21 @@ def as_float(value, default):
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def build_whisper_options(config):
+    beam_size = max(as_int(config.get("beamSize"), 5), 1)
+    no_speech_threshold = clamp_float(config.get("noSpeechThreshold"), 0.6, 0.0, 1.0)
+    options = {
+        "beam_size": beam_size,
+        "vad_filter": as_bool(config.get("vadFilter"), True),
+        "condition_on_previous_text": as_bool(config.get("conditionOnPreviousText"), False),
+        "no_speech_threshold": no_speech_threshold,
+    }
+    initial_prompt = str(config.get("initialPrompt") or "").strip()
+    if initial_prompt:
+        options["initial_prompt"] = initial_prompt
+    return options
 
 
 def normalize_chat_completions_url(base_url):
@@ -390,9 +494,10 @@ def transcribe(request):
             "media",
             f"Video input detected; using {audio_stream_count} audio track(s), duration {media_seconds_label(media_duration)}.",
             2,
+            totalSeconds=media_duration,
         )
     elif media_duration:
-        progress("media", f"Audio duration: {media_seconds_label(media_duration)}.", 2)
+        progress("media", f"Audio duration: {media_seconds_label(media_duration)}.", 2, totalSeconds=media_duration)
 
     whisper_model = request.get("whisperModel", "small")
     requested_device = request.get("computeDevice", "auto")
@@ -439,13 +544,17 @@ def transcribe(request):
                 ) from error
             raise
 
-    progress("transcribe", "Transcribing audio...", 20)
+    audio_input = prepare_audio_input(audio_path, request.get("audioEnhancement") or {})
+    whisper_options = build_whisper_options(request.get("whisperAdvanced") or {})
+    progress(
+        "transcribe",
+        f"Transcribing audio with beam size {whisper_options['beam_size']}...",
+        20,
+    )
     try:
         raw_segments, info = model.transcribe(
-            audio_path,
-            beam_size=5,
-            vad_filter=True,
-            condition_on_previous_text=False,
+            audio_input,
+            **whisper_options,
         )
     except Exception as error:
         if device == "cuda" and requested_device == "auto" and is_cuda_runtime_error(error):
@@ -463,10 +572,8 @@ def transcribe(request):
                 download_root=str(whisper_dir),
             )
             raw_segments, info = model.transcribe(
-                audio_path,
-                beam_size=5,
-                vad_filter=True,
-                condition_on_previous_text=False,
+                audio_input,
+                **whisper_options,
             )
         else:
             if device == "cuda" and is_cuda_runtime_error(error):
@@ -493,10 +600,18 @@ def transcribe(request):
         if transcription_duration > 0:
             segment_ratio = min(max(float(segment.end) / transcription_duration, 0), 1)
             percent = min(51, 20 + int(segment_ratio * 31))
+            elapsed = max(time.monotonic() - STAGE_STARTED_AT.get("transcribe", time.monotonic()), 0.001)
+            speed_factor = float(segment.end) / elapsed
+            remaining_media = max(transcription_duration - float(segment.end), 0)
+            eta_seconds = remaining_media / speed_factor if speed_factor > 0 else None
             progress(
                 "transcribe",
                 f"Transcribed {media_seconds_label(segment.end)} / {media_seconds_label(transcription_duration)}.",
                 percent,
+                processedSeconds=float(segment.end),
+                totalSeconds=transcription_duration,
+                speedFactor=round(speed_factor, 3),
+                etaSeconds=round(eta_seconds, 2) if eta_seconds is not None else None,
             )
         elif index % 5 == 0:
             progress("transcribe", f"Recognized {len(segments)} segments...", min(50, 25 + len(segments)))
