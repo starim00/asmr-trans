@@ -83,6 +83,8 @@ type TtsSettings = {
   cfgValue: number;
   inferenceTimesteps: number;
   normalize: boolean;
+  denoise: boolean;
+  retryBadcaseRatioThreshold: number;
 };
 
 type AppSettings = {

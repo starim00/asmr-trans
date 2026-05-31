@@ -27,6 +27,7 @@ The product goal is practical ASMR/audio transcription:
 - Editable segmented results.
 - Task history stored in Electron `userData/history.json`.
 - Settings stored in Electron `userData/settings.json`.
+- Window size and maximized state are stored in Electron settings and restored on startup.
 - TXT and SRT export for the selected task.
 - Batch TXT and SRT export for completed tasks.
 - Whisper model selection: `tiny`, `base`, `small`, `medium`, `large-v3`.

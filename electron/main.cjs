@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, screen } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { spawn, spawnSync } = require("node:child_process");
@@ -12,6 +12,13 @@ let activeTtsWorkerCancelRequested = false;
 const activeTranslationWorkers = new Map();
 let dependencyInstallPromise = null;
 let ttsDependencyInstallPromise = null;
+let windowStateSaveTimer = null;
+
+const DEFAULT_WINDOW_STATE = {
+  width: 1120,
+  height: 780,
+  isMaximized: false,
+};
 
 const DEFAULT_AI_SYSTEM_PROMPT =
   "\u4f60\u662f\u4e13\u4e1a\u7684\u65e5\u8bd1\u4e2d\u7ffb\u8bd1\u3002\u8bf7\u628a\u65e5\u8bed ASMR/\u53e3\u8bed\u8f6c\u5199\u7ffb\u8bd1\u6210\u81ea\u7136\u3001\u51c6\u786e\u7684\u7b80\u4f53\u4e2d\u6587\u3002\u5fe0\u5b9e\u4fdd\u7559\u539f\u610f\u3001\u8bed\u6c14\u3001\u79f0\u547c\u548c\u66a7\u6627\u8868\u8fbe\uff1b\u4e0d\u8981\u89e3\u91ca\uff0c\u4e0d\u8981\u603b\u7ed3\uff0c\u4e0d\u8981\u6dfb\u52a0\u539f\u6587\u6ca1\u6709\u7684\u4fe1\u606f\u3002";
@@ -69,12 +76,17 @@ const DEFAULT_SETTINGS = {
   tts: {
     enabled: false,
     device: "auto",
-    voicePrompt: "\u4e2d\u6587\uff0c\u8f7b\u58f0\uff0c\u6e29\u67d4\uff0c\u81ea\u7136\uff0c\u8d34\u8fd1\u539f\u97f3\u8272",
-    cfgValue: 2.0,
-    inferenceTimesteps: 10,
+    voicePrompt: "\u4e2d\u6587\uff0c\u8f7b\u58f0\uff0c\u6e29\u67d4\uff0c\u8bed\u901f\u63a5\u8fd1\u539f\u97f3\u9891\uff0c\u505c\u987f\u81ea\u7136\uff0c\u8d34\u8fd1\u539f\u97f3\u8272",
+    cfgValue: 1.6,
+    inferenceTimesteps: 20,
     normalize: true,
+    denoise: false,
+    retryBadcaseRatioThreshold: 4.0,
   },
+  windowState: DEFAULT_WINDOW_STATE,
 };
+
+const LEGACY_TTS_VOICE_PROMPT = "\u4e2d\u6587\uff0c\u8f7b\u58f0\uff0c\u6e29\u67d4\uff0c\u81ea\u7136\uff0c\u8d34\u8fd1\u539f\u97f3\u8272";
 
 function getModelsDir() {
   return path.join(app.getPath("userData"), "models");
@@ -89,6 +101,22 @@ function getHistoryPath() {
 }
 
 function mergeSettings(settings = {}) {
+  const ttsSettings = {
+    ...DEFAULT_SETTINGS.tts,
+    ...(settings.tts || {}),
+  };
+  if (
+    settings.tts &&
+    settings.tts.voicePrompt === LEGACY_TTS_VOICE_PROMPT &&
+    Number(settings.tts.cfgValue) === 2 &&
+    Number(settings.tts.inferenceTimesteps) === 10
+  ) {
+    ttsSettings.voicePrompt = DEFAULT_SETTINGS.tts.voicePrompt;
+    ttsSettings.cfgValue = DEFAULT_SETTINGS.tts.cfgValue;
+    ttsSettings.inferenceTimesteps = DEFAULT_SETTINGS.tts.inferenceTimesteps;
+    ttsSettings.retryBadcaseRatioThreshold = DEFAULT_SETTINGS.tts.retryBadcaseRatioThreshold;
+    ttsSettings.denoise = DEFAULT_SETTINGS.tts.denoise;
+  }
   const merged = {
     ...DEFAULT_SETTINGS,
     ...settings,
@@ -108,9 +136,10 @@ function mergeSettings(settings = {}) {
       ...DEFAULT_SETTINGS.whisperAdvanced,
       ...(settings.whisperAdvanced || {}),
     },
-    tts: {
-      ...DEFAULT_SETTINGS.tts,
-      ...(settings.tts || {}),
+    tts: ttsSettings,
+    windowState: {
+      ...DEFAULT_SETTINGS.windowState,
+      ...(settings.windowState || {}),
     },
   };
   merged.translationBackend = "ai";
@@ -134,6 +163,59 @@ function writeSettings(settings) {
   fs.mkdirSync(path.dirname(getSettingsPath()), { recursive: true });
   fs.writeFileSync(getSettingsPath(), JSON.stringify(nextSettings, null, 2), "utf8");
   return nextSettings;
+}
+
+function getValidatedWindowState() {
+  const savedState = readSettings().windowState || DEFAULT_WINDOW_STATE;
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const minWidth = 920;
+  const minHeight = 660;
+  return {
+    width: Math.min(Math.max(Number(savedState.width) || DEFAULT_WINDOW_STATE.width, minWidth), workArea.width),
+    height: Math.min(Math.max(Number(savedState.height) || DEFAULT_WINDOW_STATE.height, minHeight), workArea.height),
+    isMaximized: Boolean(savedState.isMaximized),
+  };
+}
+
+function getCurrentWindowState() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return DEFAULT_WINDOW_STATE;
+  }
+  const isMaximized = mainWindow.isMaximized();
+  let bounds;
+  if (typeof mainWindow.getNormalBounds === "function") {
+    bounds = mainWindow.getNormalBounds();
+  } else if (!isMaximized) {
+    bounds = mainWindow.getBounds();
+  } else {
+    bounds = readSettings().windowState || DEFAULT_WINDOW_STATE;
+  }
+  return {
+    width: Math.max(Number(bounds.width) || DEFAULT_WINDOW_STATE.width, 920),
+    height: Math.max(Number(bounds.height) || DEFAULT_WINDOW_STATE.height, 660),
+    isMaximized,
+  };
+}
+
+function saveWindowStateNow() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) {
+    return;
+  }
+  const settings = readSettings();
+  writeSettings({
+    ...settings,
+    windowState: getCurrentWindowState(),
+  });
+}
+
+function scheduleWindowStateSave() {
+  if (windowStateSaveTimer) {
+    clearTimeout(windowStateSaveTimer);
+  }
+  windowStateSaveTimer = setTimeout(() => {
+    windowStateSaveTimer = null;
+    saveWindowStateNow();
+  }, 400);
 }
 
 function readHistory() {
@@ -511,9 +593,10 @@ function ensureTtsDependencies(event, taskId = null) {
 }
 
 function createWindow() {
+  const windowState = getValidatedWindowState();
   mainWindow = new BrowserWindow({
-    width: 1120,
-    height: 780,
+    width: windowState.width,
+    height: windowState.height,
     minWidth: 920,
     minHeight: 660,
     title: "ASMR Trans",
@@ -524,6 +607,14 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  if (windowState.isMaximized) {
+    mainWindow.maximize();
+  }
+
+  mainWindow.on("resize", scheduleWindowStateSave);
+  mainWindow.on("maximize", saveWindowStateNow);
+  mainWindow.on("unmaximize", saveWindowStateNow);
+  mainWindow.on("close", saveWindowStateNow);
 
   const devServer = process.env.VITE_DEV_SERVER_URL;
   if (devServer) {

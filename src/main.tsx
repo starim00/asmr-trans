@@ -27,6 +27,7 @@ const DEFAULT_AI_SYSTEM_PROMPT =
   "\u4f60\u662f\u4e13\u4e1a\u7684\u65e5\u8bd1\u4e2d\u7ffb\u8bd1\u3002\u8bf7\u628a\u65e5\u8bed ASMR/\u53e3\u8bed\u8f6c\u5199\u7ffb\u8bd1\u6210\u81ea\u7136\u3001\u51c6\u786e\u7684\u7b80\u4f53\u4e2d\u6587\u3002\u5fe0\u5b9e\u4fdd\u7559\u539f\u610f\u3001\u8bed\u6c14\u3001\u79f0\u547c\u548c\u66a7\u6627\u8868\u8fbe\uff1b\u4e0d\u8981\u89e3\u91ca\uff0c\u4e0d\u8981\u603b\u7ed3\uff0c\u4e0d\u8981\u6dfb\u52a0\u539f\u6587\u6ca1\u6709\u7684\u4fe1\u606f\u3002";
 const DEFAULT_AI_USER_PROMPT_TEMPLATE =
   "\u8bf7\u7ffb\u8bd1\u4e0b\u9762 JSON \u6570\u7ec4\u4e2d\u7684 items\u3002\u6bcf\u9879\u5305\u542b id\u3001start\u3001end\u3001text\u3001contextBefore\u3001contextAfter\u3002context \u5b57\u6bb5\u53ea\u7528\u4e8e\u7406\u89e3\u4e0a\u4e0b\u6587\uff0c\u53ea\u7ffb\u8bd1 text\u3002\u53ea\u8fd4\u56de JSON \u6570\u7ec4\uff0c\u6570\u7ec4\u6bcf\u9879\u5fc5\u987b\u662f {\"id\": \u6570\u5b57, \"translation\": \"\u4e2d\u6587\u8bd1\u6587\"}\uff0c\u4e0d\u8981\u8fd4\u56de Markdown\u3002";
+const LEGACY_TTS_VOICE_PROMPT = "\u4e2d\u6587\uff0c\u8f7b\u58f0\uff0c\u6e29\u67d4\uff0c\u81ea\u7136\uff0c\u8d34\u8fd1\u539f\u97f3\u8272";
 
 const DEEPSEEK_PRESET: AppSettings = {
   whisperModel: DEFAULT_WHISPER_MODEL,
@@ -79,10 +80,12 @@ const DEEPSEEK_PRESET: AppSettings = {
   tts: {
     enabled: false,
     device: "auto",
-    voicePrompt: "\u4e2d\u6587\uff0c\u8f7b\u58f0\uff0c\u6e29\u67d4\uff0c\u81ea\u7136\uff0c\u8d34\u8fd1\u539f\u97f3\u8272",
-    cfgValue: 2.0,
-    inferenceTimesteps: 10,
+    voicePrompt: "\u4e2d\u6587\uff0c\u8f7b\u58f0\uff0c\u6e29\u67d4\uff0c\u8bed\u901f\u63a5\u8fd1\u539f\u97f3\u9891\uff0c\u505c\u987f\u81ea\u7136\uff0c\u8d34\u8fd1\u539f\u97f3\u8272",
+    cfgValue: 1.6,
+    inferenceTimesteps: 20,
     normalize: true,
+    denoise: false,
+    retryBadcaseRatioThreshold: 4.0,
   },
 };
 
@@ -132,6 +135,8 @@ const text = {
   cfgValue: "CFG Value",
   inferenceTimesteps: "\u751f\u6210\u6b65\u6570",
   normalizeTtsText: "\u542f\u7528\u6587\u672c\u89c4\u8303\u5316",
+  denoiseTtsReference: "\u53c2\u8003\u97f3\u9891\u964d\u566a",
+  retryBadcaseRatioThreshold: "\u5f02\u5e38\u65f6\u957f\u91cd\u8bd5\u9608\u503c",
   ttsNotEnabled: "\u8bf7\u5148\u5728\u8bbe\u7f6e\u4e2d\u542f\u7528 VoxCPM2 \u4e2d\u6587\u8bed\u97f3\u3002",
   noChineseTranslation: "\u5f53\u524d\u4efb\u52a1\u6ca1\u6709\u53ef\u751f\u6210\u7684\u4e2d\u6587\u8bd1\u6587\u3002",
   ttsRunning: "\u6b63\u5728\u751f\u6210\u4e2d\u6587\u8bed\u97f3...",
@@ -374,6 +379,22 @@ function hardwareSummary(status: HardwareStatus | null) {
 }
 
 function mergeSettings(settings?: Partial<AppSettings> | null): AppSettings {
+  const ttsSettings = {
+    ...DEEPSEEK_PRESET.tts,
+    ...(settings?.tts || {}),
+  };
+  if (
+    settings?.tts &&
+    settings.tts.voicePrompt === LEGACY_TTS_VOICE_PROMPT &&
+    Number(settings.tts.cfgValue) === 2 &&
+    Number(settings.tts.inferenceTimesteps) === 10
+  ) {
+    ttsSettings.voicePrompt = DEEPSEEK_PRESET.tts.voicePrompt;
+    ttsSettings.cfgValue = DEEPSEEK_PRESET.tts.cfgValue;
+    ttsSettings.inferenceTimesteps = DEEPSEEK_PRESET.tts.inferenceTimesteps;
+    ttsSettings.retryBadcaseRatioThreshold = DEEPSEEK_PRESET.tts.retryBadcaseRatioThreshold;
+    ttsSettings.denoise = DEEPSEEK_PRESET.tts.denoise;
+  }
   const merged = {
     ...DEEPSEEK_PRESET,
     ...(settings || {}),
@@ -393,10 +414,7 @@ function mergeSettings(settings?: Partial<AppSettings> | null): AppSettings {
       ...DEEPSEEK_PRESET.whisperAdvanced,
       ...(settings?.whisperAdvanced || {}),
     },
-    tts: {
-      ...DEEPSEEK_PRESET.tts,
-      ...(settings?.tts || {}),
-    },
+    tts: ttsSettings,
   };
   merged.translationBackend = "ai";
   return merged;
@@ -1974,19 +1992,21 @@ function SettingsDrawer({
               />
               <span>{text.enableTts}</span>
             </label>
-            <label className="field">
+            <div className="field">
               <span>{text.ttsDevice}</span>
-              <select
-                className="modelSelect"
-                value={settings.tts.device}
-                onChange={(event) => updateTts({ device: event.target.value as ComputeDevice })}
-                disabled={isRunning || !settings.tts.enabled}
-              >
-                <option value="auto">{text.auto}</option>
-                <option value="cpu">CPU</option>
-                <option value="cuda">CUDA</option>
-              </select>
-            </label>
+              <div className="segmented">
+                {(["auto", "cpu", "cuda"] as ComputeDevice[]).map((device) => (
+                  <button
+                    key={device}
+                    className={settings.tts.device === device ? "active" : ""}
+                    onClick={() => updateTts({ device })}
+                    disabled={isRunning || !settings.tts.enabled}
+                  >
+                    {device === "auto" ? text.auto : device.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
             <label className="field">
               <span>{text.voicePrompt}</span>
               <textarea
@@ -2010,6 +2030,13 @@ function SettingsDrawer({
                 disabled={isRunning || !settings.tts.enabled}
                 onChange={(inferenceTimesteps) => updateTts({ inferenceTimesteps })}
               />
+              <NumberField
+                label={text.retryBadcaseRatioThreshold}
+                value={settings.tts.retryBadcaseRatioThreshold}
+                disabled={isRunning || !settings.tts.enabled}
+                step="0.5"
+                onChange={(retryBadcaseRatioThreshold) => updateTts({ retryBadcaseRatioThreshold })}
+              />
               <label className="toggleField wideToggle">
                 <input
                   type="checkbox"
@@ -2018,6 +2045,15 @@ function SettingsDrawer({
                   disabled={isRunning || !settings.tts.enabled}
                 />
                 <span>{text.normalizeTtsText}</span>
+              </label>
+              <label className="toggleField wideToggle">
+                <input
+                  type="checkbox"
+                  checked={settings.tts.denoise}
+                  onChange={(event) => updateTts({ denoise: event.target.checked })}
+                  disabled={isRunning || !settings.tts.enabled}
+                />
+                <span>{text.denoiseTtsReference}</span>
               </label>
             </div>
             <button className="secondaryButton compactButton" onClick={installTtsDependencies} disabled={isRunning}>

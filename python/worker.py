@@ -765,9 +765,11 @@ def tts(request):
     device = str(config.get("device") or "auto").strip().lower()
     if device not in {"auto", "cpu", "cuda"}:
         device = "auto"
-    cfg_value = clamp_float(config.get("cfgValue"), 2.0, 1.0, 3.0)
-    inference_timesteps = max(as_int(config.get("inferenceTimesteps"), 10), 1)
+    cfg_value = clamp_float(config.get("cfgValue"), 1.6, 1.0, 3.0)
+    inference_timesteps = max(as_int(config.get("inferenceTimesteps"), 20), 1)
     normalize_text = as_bool(config.get("normalize"), True)
+    denoise_reference = as_bool(config.get("denoise"), False)
+    retry_ratio_threshold = clamp_float(config.get("retryBadcaseRatioThreshold"), 4.0, 1.0, 12.0)
     voice_prompt = config.get("voicePrompt") or ""
 
     progress("tts-reference", "Extracting reference voice from original media...", 4)
@@ -821,7 +823,9 @@ def tts(request):
                     cfg_value=cfg_value,
                     inference_timesteps=inference_timesteps,
                     normalize=normalize_text,
+                    denoise=denoise_reference,
                     retry_badcase=True,
+                    retry_badcase_ratio_threshold=retry_ratio_threshold,
                 )
             except Exception as error:
                 raise RuntimeError(f"VoxCPM2 generation failed on segment {index + 1}: {error}") from error
