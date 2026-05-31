@@ -9,10 +9,13 @@ contextBridge.exposeInMainWorld("asmrTrans", {
   getHistory: () => ipcRenderer.invoke("history:get"),
   upsertHistory: (task) => ipcRenderer.invoke("history:upsert", task),
   retryDependencies: () => ipcRenderer.invoke("deps:retry"),
+  installTtsDependencies: () => ipcRenderer.invoke("tts:install-deps"),
   startTranscription: (payload) => ipcRenderer.invoke("transcribe:start", payload),
   cancelTranscription: () => ipcRenderer.invoke("transcribe:cancel"),
   startTranslation: (payload) => ipcRenderer.invoke("translate:start", payload),
   cancelTranslation: (taskId) => ipcRenderer.invoke("translate:cancel", taskId),
+  startTts: (payload) => ipcRenderer.invoke("tts:start", payload),
+  cancelTts: () => ipcRenderer.invoke("tts:cancel"),
   saveTxt: (payload) => ipcRenderer.invoke("export:txt", payload),
   exportBatch: (payload) => ipcRenderer.invoke("export:batch", payload),
   onProgress: (callback) => {
@@ -49,6 +52,26 @@ contextBridge.exposeInMainWorld("asmrTrans", {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("translate:error", listener);
     return () => ipcRenderer.removeListener("translate:error", listener);
+  },
+  onTtsProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("tts:progress", listener);
+    return () => ipcRenderer.removeListener("tts:progress", listener);
+  },
+  onTtsDone: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("tts:done", listener);
+    return () => ipcRenderer.removeListener("tts:done", listener);
+  },
+  onTtsError: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("tts:error", listener);
+    return () => ipcRenderer.removeListener("tts:error", listener);
+  },
+  onTtsCanceled: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("tts:canceled", listener);
+    return () => ipcRenderer.removeListener("tts:canceled", listener);
   },
   onDependencyProgress: (callback) => {
     const listener = (_event, progress) => callback(progress);

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -115,6 +116,28 @@ def check_dependencies():
     return missing
 
 
+def check_tts_dependencies():
+    missing = []
+    modules = [
+        ("torch", "torch"),
+        ("torchaudio", "torchaudio"),
+        ("soundfile", "soundfile"),
+        ("librosa", "librosa"),
+        ("numpy", "numpy"),
+        ("av", "av"),
+    ]
+    for module_name, package_name in modules:
+        try:
+            __import__(module_name)
+        except Exception as error:
+            missing.append(f"{package_name}: {error}")
+    try:
+        from voxcpm import VoxCPM  # noqa: F401
+    except Exception as error:
+        missing.append(f"voxcpm: {error}")
+    return missing
+
+
 def resolve_device(requested_device):
     requested = (requested_device or "auto").lower()
     hardware_status = get_hardware_status()
@@ -188,11 +211,13 @@ def clamp_float(value, default, minimum=None, maximum=None):
     return number
 
 
-def decode_media_to_mono_float32(media_path, sample_rate=16000):
+def decode_media_to_mono_float32(media_path, sample_rate=16000, max_seconds=None):
     import av
     import numpy as np
 
     chunks = []
+    sample_limit = int(sample_rate * max_seconds) if max_seconds else None
+    total_samples = 0
     with av.open(str(media_path), mode="r") as container:
         audio_streams = [stream for stream in container.streams if stream.type == "audio"]
         if not audio_streams:
@@ -204,7 +229,16 @@ def decode_media_to_mono_float32(media_path, sample_rate=16000):
                 array = resampled.to_ndarray()
                 if array.ndim > 1:
                     array = array.reshape(-1)
-                chunks.append(array.astype(np.float32) / 32768.0)
+                samples = array.astype(np.float32) / 32768.0
+                if sample_limit is not None:
+                    remaining = sample_limit - total_samples
+                    if remaining <= 0:
+                        break
+                    samples = samples[:remaining]
+                chunks.append(samples)
+                total_samples += samples.size
+            if sample_limit is not None and total_samples >= sample_limit:
+                break
 
     if not chunks:
         raise RuntimeError(f"No audio samples could be decoded from: {Path(media_path).name}")
@@ -663,10 +697,164 @@ def translate(request):
     }
 
 
+def select_reference_audio_window(samples, sample_rate, duration_seconds=20):
+    import numpy as np
+
+    audio = np.asarray(samples, dtype=np.float32)
+    if audio.size == 0:
+        raise RuntimeError("Reference audio extraction produced no samples.")
+
+    target_samples = int(sample_rate * duration_seconds)
+    if audio.size <= target_samples:
+        return audio
+
+    frame = max(int(sample_rate), 1)
+    rms_values = []
+    for start in range(0, audio.size - frame + 1, frame):
+        window = audio[start : start + frame]
+        rms_values.append(float(np.sqrt(np.mean(window * window))))
+    if not rms_values:
+        return audio[:target_samples]
+
+    window_frames = max(int(duration_seconds), 1)
+    best_start_frame = 0
+    best_score = -1.0
+    for frame_index in range(0, max(len(rms_values) - window_frames + 1, 1)):
+        score = sum(rms_values[frame_index : frame_index + window_frames]) / window_frames
+        if score > best_score:
+            best_score = score
+            best_start_frame = frame_index
+
+    start = best_start_frame * frame
+    return audio[start : start + target_samples]
+
+
+def build_tts_text(segment, voice_prompt):
+    text = str(segment.get("translatedText") or "").strip()
+    if not text:
+        return ""
+    prompt = str(voice_prompt or "").strip()
+    if prompt:
+        return f"({prompt}){text}"
+    return text
+
+
+def tts(request):
+    import numpy as np
+    import soundfile as sf
+
+    media_path = request.get("mediaPath")
+    output_path = request.get("outputPath")
+    segments = request.get("segments") or []
+    config = request.get("tts") or {}
+    models_dir = request.get("modelsDir") or str(Path.home() / ".asmr-trans" / "models")
+
+    if not media_path or not os.path.exists(media_path):
+        raise FileNotFoundError(f"Reference media file does not exist: {media_path}")
+    if not output_path:
+        raise ValueError("TTS output path is empty.")
+
+    synth_segments = [segment for segment in segments if str(segment.get("translatedText") or "").strip()]
+    if not synth_segments:
+        raise ValueError("There is no Chinese translation text to synthesize.")
+
+    voxcpm_cache = Path(models_dir) / "voxcpm"
+    voxcpm_cache.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_HOME", str(voxcpm_cache))
+
+    device = str(config.get("device") or "auto").strip().lower()
+    if device not in {"auto", "cpu", "cuda"}:
+        device = "auto"
+    cfg_value = clamp_float(config.get("cfgValue"), 2.0, 1.0, 3.0)
+    inference_timesteps = max(as_int(config.get("inferenceTimesteps"), 10), 1)
+    normalize_text = as_bool(config.get("normalize"), True)
+    voice_prompt = config.get("voicePrompt") or ""
+
+    progress("tts-reference", "Extracting reference voice from original media...", 4)
+    reference_samples = decode_media_to_mono_float32(media_path, sample_rate=16000, max_seconds=300)
+    reference_samples = select_reference_audio_window(reference_samples, 16000, duration_seconds=20)
+    reference_samples = enhance_audio_samples(reference_samples, {"normalize": True, "targetPeak": 0.85})
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+        reference_path = temp_file.name
+    try:
+        sf.write(reference_path, reference_samples, 16000)
+    except Exception as error:
+        raise RuntimeError(f"Unable to write VoxCPM2 reference audio: {error}") from error
+
+    try:
+        try:
+            from voxcpm import VoxCPM
+        except Exception as error:
+            raise RuntimeError(
+                f"VoxCPM2 is not installed or failed to import: {error}. "
+                "Use the TTS dependency installer and try again."
+            ) from error
+
+        progress("tts-model", f"Loading VoxCPM2 on {device.upper()}...", 10)
+        try:
+            model = VoxCPM.from_pretrained(
+                "openbmb/VoxCPM2",
+                load_denoiser=False,
+                device=device,
+                optimize=device.startswith("cuda"),
+            )
+        except Exception as error:
+            raise RuntimeError(f"Unable to load VoxCPM2: {error}") from error
+
+        sample_rate = int(getattr(model.tts_model, "sample_rate", 48000))
+        generated = []
+        silence = np.zeros(int(sample_rate * 0.22), dtype=np.float32)
+        total = len(synth_segments)
+        for index, segment in enumerate(synth_segments):
+            tts_text = build_tts_text(segment, voice_prompt)
+            if not tts_text:
+                continue
+            progress(
+                "tts",
+                f"Generating Chinese voice segment {index + 1}/{total}...",
+                12 + int(((index + 1) / max(total, 1)) * 78),
+            )
+            try:
+                wav = model.generate(
+                    text=tts_text,
+                    reference_wav_path=reference_path,
+                    cfg_value=cfg_value,
+                    inference_timesteps=inference_timesteps,
+                    normalize=normalize_text,
+                    retry_badcase=True,
+                )
+            except Exception as error:
+                raise RuntimeError(f"VoxCPM2 generation failed on segment {index + 1}: {error}") from error
+            generated.append(np.asarray(wav, dtype=np.float32))
+            generated.append(silence)
+
+        if not generated:
+            raise RuntimeError("VoxCPM2 did not produce any audio.")
+
+        output_audio = np.concatenate(generated)
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        progress("tts-save", "Saving Chinese voice WAV...", 96)
+        sf.write(output_path, output_audio, sample_rate)
+        progress("done", "Chinese voice WAV is ready.", 100)
+        return {
+            "outputPath": output_path,
+            "sampleRate": sample_rate,
+            "durationSeconds": round(float(output_audio.size) / sample_rate, 2),
+            "segments": total,
+            "computeDevice": device,
+        }
+    finally:
+        try:
+            Path(reference_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--check-deps", action="store_true")
+    parser.add_argument("--check-tts-deps", action="store_true")
     parser.add_argument("--hardware", action="store_true")
     parser.add_argument("--request-file")
     args = parser.parse_args()
@@ -682,6 +870,13 @@ def main():
             sys.exit(1)
         return
 
+    if getattr(args, "check_tts_deps", False):
+        missing = check_tts_dependencies()
+        print(json.dumps({"ok": len(missing) == 0, "missing": missing}, ensure_ascii=False))
+        if missing:
+            sys.exit(1)
+        return
+
     if args.hardware:
         print(json.dumps(get_hardware_status(), ensure_ascii=False))
         return
@@ -690,6 +885,8 @@ def main():
         request = parse_request(args.request_file)
         if request.get("mode") == "translate":
             result = translate(request)
+        elif request.get("mode") == "tts":
+            result = tts(request)
         else:
             result = transcribe(request)
         emit("done", result)

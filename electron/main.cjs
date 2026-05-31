@@ -7,8 +7,11 @@ const MEDIA_EXTENSIONS = ["mp3", "wav", "m4a", "flac", "ogg", "aac", "mp4", "mkv
 let mainWindow = null;
 let activeWorker = null;
 let activeWorkerCancelRequested = false;
+let activeTtsWorker = null;
+let activeTtsWorkerCancelRequested = false;
 const activeTranslationWorkers = new Map();
 let dependencyInstallPromise = null;
+let ttsDependencyInstallPromise = null;
 
 const DEFAULT_AI_SYSTEM_PROMPT =
   "\u4f60\u662f\u4e13\u4e1a\u7684\u65e5\u8bd1\u4e2d\u7ffb\u8bd1\u3002\u8bf7\u628a\u65e5\u8bed ASMR/\u53e3\u8bed\u8f6c\u5199\u7ffb\u8bd1\u6210\u81ea\u7136\u3001\u51c6\u786e\u7684\u7b80\u4f53\u4e2d\u6587\u3002\u5fe0\u5b9e\u4fdd\u7559\u539f\u610f\u3001\u8bed\u6c14\u3001\u79f0\u547c\u548c\u66a7\u6627\u8868\u8fbe\uff1b\u4e0d\u8981\u89e3\u91ca\uff0c\u4e0d\u8981\u603b\u7ed3\uff0c\u4e0d\u8981\u6dfb\u52a0\u539f\u6587\u6ca1\u6709\u7684\u4fe1\u606f\u3002";
@@ -63,6 +66,14 @@ const DEFAULT_SETTINGS = {
     conditionOnPreviousText: false,
     initialPrompt: "",
   },
+  tts: {
+    enabled: false,
+    device: "auto",
+    voicePrompt: "\u4e2d\u6587\uff0c\u8f7b\u58f0\uff0c\u6e29\u67d4\uff0c\u81ea\u7136\uff0c\u8d34\u8fd1\u539f\u97f3\u8272",
+    cfgValue: 2.0,
+    inferenceTimesteps: 10,
+    normalize: true,
+  },
 };
 
 function getModelsDir() {
@@ -96,6 +107,10 @@ function mergeSettings(settings = {}) {
     whisperAdvanced: {
       ...DEFAULT_SETTINGS.whisperAdvanced,
       ...(settings.whisperAdvanced || {}),
+    },
+    tts: {
+      ...DEFAULT_SETTINGS.tts,
+      ...(settings.tts || {}),
     },
   };
   merged.translationBackend = "ai";
@@ -181,6 +196,13 @@ function getRequirementsPath() {
   return path.join(__dirname, "..", "python", "requirements-cuda.txt");
 }
 
+function getTtsRequirementsPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "python", "requirements-tts.txt");
+  }
+  return path.join(__dirname, "..", "python", "requirements-tts.txt");
+}
+
 function getPackagedPythonExecutable() {
   if (!app.isPackaged) {
     return null;
@@ -245,8 +267,8 @@ function sendDependencyProgress(message, percent = 0) {
   }
 }
 
-function checkPythonDependencies() {
-  const { executable, args } = getPythonCommand(["--check-deps"]);
+function checkPythonDependencies(extraArgs = ["--check-deps"]) {
+  const { executable, args } = getPythonCommand(extraArgs);
   return spawnSync(executable, args, {
     encoding: "utf8",
     windowsHide: true,
@@ -254,7 +276,7 @@ function checkPythonDependencies() {
   });
 }
 
-function getPipInstallAttempts(requirementsPath) {
+function getPipInstallAttempts(requirementsPath, extraArgs = []) {
   const commonArgs = ["-m", "pip", "install", "--disable-pip-version-check", "-r", requirementsPath];
   const attempts = [{ label: "Default PyPI", args: commonArgs }];
   const customIndex = (process.env.ASMR_TRANS_PIP_INDEX_URL || "").trim();
@@ -266,6 +288,7 @@ function getPipInstallAttempts(requirementsPath) {
         "pip",
         "install",
         "--disable-pip-version-check",
+        ...extraArgs,
         "--index-url",
         customIndex,
         "-r",
@@ -281,6 +304,7 @@ function getPipInstallAttempts(requirementsPath) {
         "pip",
         "install",
         "--disable-pip-version-check",
+        ...extraArgs,
         "--index-url",
         "https://mirrors.aliyun.com/pypi/simple/",
         "--trusted-host",
@@ -296,6 +320,7 @@ function getPipInstallAttempts(requirementsPath) {
         "pip",
         "install",
         "--disable-pip-version-check",
+        ...extraArgs,
         "--index-url",
         "https://pypi.tuna.tsinghua.edu.cn/simple/",
         "--trusted-host",
@@ -305,12 +330,15 @@ function getPipInstallAttempts(requirementsPath) {
       ],
     },
   );
+  if (extraArgs.length) {
+    attempts[0] = { label: attempts[0].label, args: ["-m", "pip", "install", "--disable-pip-version-check", ...extraArgs, "-r", requirementsPath] };
+  }
   return attempts;
 }
 
-function runPipInstallAttempt(packagedPython, attempt, attemptIndex, attemptCount) {
+function runPipInstallAttempt(packagedPython, attempt, attemptIndex, attemptCount, progress = sendDependencyProgress, noun = "Python dependencies") {
   return new Promise((resolve, reject) => {
-    sendDependencyProgress(`Installing Python dependencies (${attempt.label}, ${attemptIndex + 1}/${attemptCount})...`, 5);
+    progress(`Installing ${noun} (${attempt.label}, ${attemptIndex + 1}/${attemptCount})...`, 5);
     const installer = spawn(packagedPython, attempt.args, {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -324,7 +352,7 @@ function runPipInstallAttempt(packagedPython, attempt, attemptIndex, attemptCoun
       output += chunk;
       const lastLine = output.split(/\r?\n/).filter(Boolean).pop();
       if (lastLine) {
-        sendDependencyProgress(`Installing Python dependencies (${attempt.label}): ${lastLine.slice(0, 160)}`, 20);
+        progress(`Installing ${noun} (${attempt.label}): ${lastLine.slice(0, 160)}`, 20);
       }
     };
     installer.stdout.on("data", onData);
@@ -391,6 +419,95 @@ function ensurePythonDependencies() {
   });
 
   return dependencyInstallPromise;
+}
+
+function getPipCommandForAttempt(attempt) {
+  const packagedPython = getPackagedPythonExecutable();
+  if (packagedPython) {
+    return { executable: packagedPython, args: attempt.args };
+  }
+  if (process.env.ASMR_TRANS_PYTHON) {
+    return { executable: process.env.ASMR_TRANS_PYTHON, args: attempt.args };
+  }
+  if (process.platform === "win32") {
+    return { executable: "py", args: ["-3", ...attempt.args] };
+  }
+  return { executable: "python3", args: attempt.args };
+}
+
+function runTtsPipInstallAttempt(attempt, attemptIndex, attemptCount, progress) {
+  const command = getPipCommandForAttempt(attempt);
+  return runPipInstallAttempt(command.executable, { ...attempt, args: command.args }, attemptIndex, attemptCount, progress, "VoxCPM2 dependencies");
+}
+
+function installVoxCpmPackageNoDeps(progress) {
+  const attempt = {
+    label: "VoxCPM2 package",
+    args: ["-m", "pip", "install", "--disable-pip-version-check", "--no-deps", "--force-reinstall", "voxcpm==2.0.3"],
+  };
+  const command = getPipCommandForAttempt(attempt);
+  return runPipInstallAttempt(command.executable, { ...attempt, args: command.args }, 0, 1, progress, "VoxCPM2 package");
+}
+
+function ensureTtsDependencies(event, taskId = null) {
+  if (ttsDependencyInstallPromise) {
+    return ttsDependencyInstallPromise;
+  }
+
+  const progress = (message, percent = 0) => {
+    event.sender.send("deps:progress", {
+      stage: "tts-dependencies",
+      message,
+      percent,
+    });
+    if (taskId) {
+      event.sender.send("tts:progress", {
+        taskId,
+        progress: { stage: "tts-dependencies", message, percent },
+      });
+    }
+  };
+
+  ttsDependencyInstallPromise = (async () => {
+    progress("Checking VoxCPM2 dependencies...", 2);
+    const checkResult = checkPythonDependencies(["--check-tts-deps"]);
+    if (checkResult.status === 0) {
+      progress("VoxCPM2 dependencies are ready.", 100);
+      return;
+    }
+
+    const requirementsPath = getTtsRequirementsPath();
+    if (!fs.existsSync(requirementsPath)) {
+      throw new Error(`VoxCPM2 requirements file was not found: ${requirementsPath}`);
+    }
+
+    const attempts = getPipInstallAttempts(requirementsPath, [
+      "--extra-index-url",
+      "https://download.pytorch.org/whl/cu124",
+      "--trusted-host",
+      "download.pytorch.org",
+    ]);
+    let lastOutput = "";
+    for (let index = 0; index < attempts.length; index += 1) {
+      try {
+        await runTtsPipInstallAttempt(attempts[index], index, attempts.length, progress);
+        progress("Installing VoxCPM2 package without optional TorchCodec dependency...", 88);
+        await installVoxCpmPackageNoDeps(progress);
+        progress("VoxCPM2 dependencies installed.", 100);
+        return;
+      } catch (error) {
+        lastOutput = error.output || error.message || "";
+        if (index < attempts.length - 1) {
+          progress(`VoxCPM2 dependency source failed, switching to: ${attempts[index + 1].label}`, 12);
+        }
+      }
+    }
+    throw new Error(`VoxCPM2 dependency installation failed after trying PyPI and mirrors. ${lastOutput.slice(-1000)}`);
+  })().finally(() => {
+    ttsDependencyInstallPromise = null;
+  });
+
+  return ttsDependencyInstallPromise;
 }
 
 function createWindow() {
@@ -479,6 +596,7 @@ ipcMain.handle("models:status", async () => {
   return {
     modelsDir,
     whisperDownloaded: hasModelFiles(path.join(modelsDir, "whisper")),
+    voxcpmDownloaded: hasModelFiles(path.join(modelsDir, "voxcpm")),
   };
 });
 
@@ -533,6 +651,12 @@ ipcMain.handle("deps:retry", async () => {
   return { ok: true };
 });
 
+ipcMain.handle("tts:install-deps", async (event) => {
+  ttsDependencyInstallPromise = null;
+  await ensureTtsDependencies(event);
+  return { ok: true };
+});
+
 ipcMain.handle("transcribe:start", async (event, payload) => {
   if (!payload || !payload.audioPath) {
     throw new Error("Select an audio file first.");
@@ -545,6 +669,9 @@ ipcMain.handle("transcribe:start", async (event, payload) => {
 
   if (activeWorker) {
     throw new Error("A transcription task is already running.");
+  }
+  if (activeTtsWorker) {
+    throw new Error("A speech generation task is running. Wait for it to finish before starting transcription.");
   }
 
   await ensurePythonDependencies();
@@ -780,6 +907,144 @@ ipcMain.handle("translate:cancel", async (_event, taskId) => {
     worker.kill();
   } catch (_error) {
     // Nothing else to do.
+  }
+  return { canceled: true };
+});
+
+ipcMain.handle("tts:start", async (event, payload) => {
+  if (!payload || !payload.taskId || !payload.mediaPath || !Array.isArray(payload.segments)) {
+    throw new Error("Invalid TTS task.");
+  }
+  if (activeWorker) {
+    throw new Error("A transcription task is running. Wait for it to finish before generating speech.");
+  }
+  if (activeTtsWorker) {
+    throw new Error("A speech generation task is already running.");
+  }
+
+  const translatedSegments = payload.segments.filter((segment) => typeof segment.translatedText === "string" && segment.translatedText.trim());
+  if (!translatedSegments.length) {
+    throw new Error("There is no edited Chinese translation to synthesize.");
+  }
+
+  await ensureTtsDependencies(event, payload.taskId);
+
+  const defaultFileName = safeExportFileName(payload.defaultFileName || "chinese-voice.wav");
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: "Save Chinese voice WAV",
+    defaultPath: path.join(payload.defaultDirectory || app.getPath("documents"), defaultFileName),
+    filters: [{ name: "WAV Audio", extensions: ["wav"] }],
+  });
+  if (result.canceled || !result.filePath) {
+    return { started: false };
+  }
+
+  const modelsDir = getModelsDir();
+  fs.mkdirSync(modelsDir, { recursive: true });
+  const savedSettings = readSettings();
+  const tts = {
+    ...savedSettings.tts,
+    ...(payload.tts || {}),
+  };
+  const { executable, args } = getPythonCommand();
+  const request = {
+    mode: "tts",
+    taskId: payload.taskId,
+    mediaPath: payload.mediaPath,
+    outputPath: result.filePath,
+    segments: payload.segments,
+    tts,
+    modelsDir,
+  };
+
+  activeTtsWorker = spawn(executable, args, {
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+    env: getWorkerEnv(),
+  });
+  activeTtsWorkerCancelRequested = false;
+  const worker = activeTtsWorker;
+  const releaseWorker = () => {
+    if (activeTtsWorker === worker) {
+      activeTtsWorker = null;
+      activeTtsWorkerCancelRequested = false;
+    }
+  };
+
+  let stderr = "";
+  worker.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  worker.stdout.setEncoding("utf8");
+  let buffer = "";
+  let workerReportedError = false;
+  worker.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const message = JSON.parse(line);
+        if (message.type === "progress") {
+          event.sender.send("tts:progress", { taskId: payload.taskId, progress: message.payload });
+        } else if (message.type === "done") {
+          workerReportedError = false;
+          releaseWorker();
+          event.sender.send("tts:done", { taskId: payload.taskId, result: message.payload });
+        } else if (message.type === "error") {
+          workerReportedError = true;
+          releaseWorker();
+          event.sender.send("tts:error", { taskId: payload.taskId, error: message.payload });
+        }
+      } catch (_error) {
+        event.sender.send("tts:error", {
+          taskId: payload.taskId,
+          error: { message: `Unable to parse Python TTS output: ${line}` },
+        });
+      }
+    }
+  });
+
+  worker.on("error", (error) => {
+    workerReportedError = true;
+    event.sender.send("tts:error", {
+      taskId: payload.taskId,
+      error: { message: `Unable to start Python TTS worker: ${error.message}` },
+    });
+    releaseWorker();
+  });
+
+  worker.on("close", (code) => {
+    if (activeTtsWorker === worker && activeTtsWorkerCancelRequested) {
+      event.sender.send("tts:canceled", { taskId: payload.taskId, message: "\u4e2d\u6587\u8bed\u97f3\u751f\u6210\u5df2\u53d6\u6d88\u3002" });
+    } else if (activeTtsWorker === worker && code !== 0 && !workerReportedError) {
+      event.sender.send("tts:error", {
+        taskId: payload.taskId,
+        error: { message: stderr.trim() || `Python TTS worker exited with code ${code}` },
+      });
+    }
+    releaseWorker();
+  });
+
+  worker.stdin.write(Buffer.from(JSON.stringify(request), "utf8"));
+  worker.stdin.end();
+
+  return { started: true, path: result.filePath };
+});
+
+ipcMain.handle("tts:cancel", async (_event) => {
+  if (!activeTtsWorker) {
+    return { canceled: false };
+  }
+  activeTtsWorkerCancelRequested = true;
+  try {
+    activeTtsWorker.kill();
+  } catch (_error) {
+    activeTtsWorker = null;
+    activeTtsWorkerCancelRequested = false;
   }
   return { canceled: true };
 });

@@ -16,11 +16,13 @@ import {
   SlidersHorizontal,
   Square,
   Trash2,
+  Volume2,
   X,
 } from "lucide-react";
 import "./styles.css";
 
 const DEFAULT_WHISPER_MODEL: WhisperModelName = "small";
+const SEGMENT_PAGE_SIZE = 80;
 const DEFAULT_AI_SYSTEM_PROMPT =
   "\u4f60\u662f\u4e13\u4e1a\u7684\u65e5\u8bd1\u4e2d\u7ffb\u8bd1\u3002\u8bf7\u628a\u65e5\u8bed ASMR/\u53e3\u8bed\u8f6c\u5199\u7ffb\u8bd1\u6210\u81ea\u7136\u3001\u51c6\u786e\u7684\u7b80\u4f53\u4e2d\u6587\u3002\u5fe0\u5b9e\u4fdd\u7559\u539f\u610f\u3001\u8bed\u6c14\u3001\u79f0\u547c\u548c\u66a7\u6627\u8868\u8fbe\uff1b\u4e0d\u8981\u89e3\u91ca\uff0c\u4e0d\u8981\u603b\u7ed3\uff0c\u4e0d\u8981\u6dfb\u52a0\u539f\u6587\u6ca1\u6709\u7684\u4fe1\u606f\u3002";
 const DEFAULT_AI_USER_PROMPT_TEMPLATE =
@@ -74,6 +76,14 @@ const DEEPSEEK_PRESET: AppSettings = {
     conditionOnPreviousText: false,
     initialPrompt: "",
   },
+  tts: {
+    enabled: false,
+    device: "auto",
+    voicePrompt: "\u4e2d\u6587\uff0c\u8f7b\u58f0\uff0c\u6e29\u67d4\uff0c\u81ea\u7136\uff0c\u8d34\u8fd1\u539f\u97f3\u8272",
+    cfgValue: 2.0,
+    inferenceTimesteps: 10,
+    normalize: true,
+  },
 };
 
 const WHISPER_MODELS: Array<{ value: WhisperModelName; label: string; description: string }> = [
@@ -85,6 +95,15 @@ const WHISPER_MODELS: Array<{ value: WhisperModelName; label: string; descriptio
 ];
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "webm", "avi", "wmv"]);
+const SETTINGS_SECTIONS = [
+  { key: "recognition", label: "识别" },
+  { key: "ai", label: "AI 翻译" },
+  { key: "enhancement", label: "音频增强" },
+  { key: "tts", label: "语音生成" },
+  { key: "models", label: "模型与硬件" },
+  { key: "proxy", label: "代理" },
+] as const;
+type SettingsSection = (typeof SETTINGS_SECTIONS)[number]["key"];
 
 const text = {
   appSubtitle: "\u672c\u5730\u684c\u9762\u6279\u91cf\u8f6c\u5199",
@@ -103,6 +122,22 @@ const text = {
   translation: "\u8bd1\u6587",
   saveTxt: "\u4fdd\u5b58\u4e3a txt",
   saveSrt: "\u4fdd\u5b58\u4e3a srt",
+  generateChineseVoice: "\u751f\u6210\u4e2d\u6587\u8bed\u97f3",
+  cancelChineseVoice: "\u53d6\u6d88\u8bed\u97f3\u751f\u6210",
+  tts: "VoxCPM2 \u4e2d\u6587\u8bed\u97f3",
+  enableTts: "\u542f\u7528\u5b9e\u9a8c\u6027\u4e2d\u6587\u8bed\u97f3\u751f\u6210",
+  ttsHint: "\u5bf9\u5df2\u7f16\u8f91\u7684\u4e2d\u6587\u8bd1\u6587\u751f\u6210 WAV\uff1b\u9996\u6b21\u4f7f\u7528\u4f1a\u6309\u9700\u5b89\u88c5 VoxCPM2 \u4f9d\u8d56\u5e76\u4e0b\u8f7d\u6a21\u578b\u3002",
+  ttsDevice: "\u8bed\u97f3\u751f\u6210\u8bbe\u5907",
+  voicePrompt: "\u58f0\u97f3\u98ce\u683c\u63d0\u793a",
+  cfgValue: "CFG Value",
+  inferenceTimesteps: "\u751f\u6210\u6b65\u6570",
+  normalizeTtsText: "\u542f\u7528\u6587\u672c\u89c4\u8303\u5316",
+  ttsNotEnabled: "\u8bf7\u5148\u5728\u8bbe\u7f6e\u4e2d\u542f\u7528 VoxCPM2 \u4e2d\u6587\u8bed\u97f3\u3002",
+  noChineseTranslation: "\u5f53\u524d\u4efb\u52a1\u6ca1\u6709\u53ef\u751f\u6210\u7684\u4e2d\u6587\u8bd1\u6587\u3002",
+  ttsRunning: "\u6b63\u5728\u751f\u6210\u4e2d\u6587\u8bed\u97f3...",
+  ttsCanceled: "\u4e2d\u6587\u8bed\u97f3\u751f\u6210\u5df2\u53d6\u6d88\u3002",
+  showingSegments: "\u5df2\u663e\u793a\u5206\u6bb5",
+  loadMoreSegments: "\u52a0\u8f7d\u66f4\u591a\u5206\u6bb5",
   exportAllTxt: "\u6279\u91cf\u5bfc\u51fa txt",
   exportAllSrt: "\u6279\u91cf\u5bfc\u51fa srt",
   saved: "\u5df2\u4fdd\u5b58\uff1a",
@@ -188,6 +223,16 @@ const text = {
   aiProxyHint: "AI \u7ffb\u8bd1\u9ed8\u8ba4\u4e0d\u8d70\u4ee3\u7406\uff1b\u4ec5\u5728\u9700\u8981\u8bbf\u95ee\u7279\u5b9a API \u65f6\u5355\u72ec\u5f00\u542f\u3002",
   retryDependencies: "\u91cd\u8bd5\u4f9d\u8d56\u5b89\u88c5",
   retryingDependencies: "\u6b63\u5728\u91cd\u8bd5\u4f9d\u8d56\u5b89\u88c5...",
+  installTtsDependencies: "\u5b89\u88c5/\u4fee\u590d VoxCPM2 \u4f9d\u8d56",
+  installingTtsDependencies: "\u6b63\u5728\u5b89\u88c5/\u4fee\u590d VoxCPM2 \u4f9d\u8d56...",
+  unsavedSettings: "有未保存的配置",
+  runtimeSettingsSaved: "模型和设备会立即保存",
+  saveSettingsHint: "保存 AI、代理、音频增强和语音生成配置",
+  segmentRemaining: "剩余",
+  segmentIndex: "第",
+  segmentUnit: "段",
+  bilingualSegment: "双语",
+  sourceOnlySegment: "单语",
   models: "\u6a21\u578b\u72b6\u6001",
   firstUseDownload: "\u9996\u6b21\u4f7f\u7528\u4e0b\u8f7d",
   downloaded: "\u5df2\u4e0b\u8f7d",
@@ -219,11 +264,16 @@ const missingDesktopApi = {
   getHistory: async (): Promise<HistoryTask[]> => [],
   upsertHistory: async (task: HistoryTask) => ({ saved: Boolean(task), id: task.id }),
   retryDependencies: async () => ({ ok: false }),
+  installTtsDependencies: async () => ({ ok: false }),
   cancelTranscription: async () => ({ canceled: false }),
   startTranslation: async () => {
     throw new Error("\u8bf7\u5728 Electron \u684c\u9762\u5ba2\u6237\u7aef\u4e2d\u542f\u52a8\u7ffb\u8bd1\u3002");
   },
   cancelTranslation: async () => ({ canceled: false }),
+  startTts: async () => {
+    throw new Error("\u8bf7\u5728 Electron \u684c\u9762\u5ba2\u6237\u7aef\u4e2d\u751f\u6210\u4e2d\u6587\u8bed\u97f3\u3002");
+  },
+  cancelTts: async () => ({ canceled: false }),
   startTranscription: async () => {
     throw new Error("\u8bf7\u5728 Electron \u684c\u9762\u5ba2\u6237\u7aef\u4e2d\u542f\u52a8\u8f6c\u5199\u3002");
   },
@@ -240,6 +290,10 @@ const missingDesktopApi = {
   onTranslateProgress: () => () => undefined,
   onTranslateDone: () => () => undefined,
   onTranslateError: () => () => undefined,
+  onTtsProgress: () => () => undefined,
+  onTtsDone: () => () => undefined,
+  onTtsError: () => () => undefined,
+  onTtsCanceled: () => () => undefined,
   onDependencyProgress: () => () => undefined,
 };
 
@@ -339,6 +393,10 @@ function mergeSettings(settings?: Partial<AppSettings> | null): AppSettings {
       ...DEEPSEEK_PRESET.whisperAdvanced,
       ...(settings?.whisperAdvanced || {}),
     },
+    tts: {
+      ...DEEPSEEK_PRESET.tts,
+      ...(settings?.tts || {}),
+    },
   };
   merged.translationBackend = "ai";
   return merged;
@@ -365,6 +423,10 @@ function mergeStageTiming(current: Record<string, number> | undefined, progress:
 
 function shouldTranslateWithAi(result: TranscriptionResult) {
   return result.detectedLanguage.toLowerCase().startsWith("ja");
+}
+
+function hasChineseTranslation(result: TranscriptionResult | null | undefined) {
+  return Boolean(result?.segments.some((segment) => typeof segment.translatedText === "string" && segment.translatedText.trim()));
 }
 
 function resizeTextarea(textarea: HTMLTextAreaElement) {
@@ -554,6 +616,7 @@ function App() {
   const [whisperModel, setWhisperModel] = useState<WhisperModelName>(DEFAULT_WHISPER_MODEL);
   const [settings, setSettings] = useState<AppSettings>(DEEPSEEK_PRESET);
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [settingsDirty, setSettingsDirty] = useState(false);
   const [isQueueRunning, setIsQueueRunning] = useState(false);
   const [isQueuePaused, setIsQueuePaused] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -561,6 +624,8 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [savedPath, setSavedPath] = useState<string | null>(null);
   const [globalProgress, setGlobalProgress] = useState<TranscriptionProgress | null>(null);
+  const [ttsTaskId, setTtsTaskId] = useState<string | null>(null);
+  const [visibleSegmentCount, setVisibleSegmentCount] = useState(SEGMENT_PAGE_SIZE);
 
   const currentTaskIdRef = useRef<string | null>(null);
   const taskResolverRef = useRef<((ok: boolean) => void) | null>(null);
@@ -571,6 +636,7 @@ function App() {
   const settingsRef = useRef(settings);
   const whisperModelRef = useRef(whisperModel);
   const computeDeviceRef = useRef(computeDevice);
+  const ttsTaskIdRef = useRef<string | null>(null);
   const resultScrollRef = useRef<HTMLDivElement | null>(null);
 
   const selectedTask = useMemo(
@@ -579,6 +645,13 @@ function App() {
   );
   const txtContent = useMemo(() => buildTxt(selectedTask?.result), [selectedTask]);
   const srtContent = useMemo(() => buildSrt(selectedTask?.result), [selectedTask]);
+  const selectedTaskHasChinese = useMemo(() => hasChineseTranslation(selectedTask?.result), [selectedTask]);
+  const selectedSegments = selectedTask?.result?.segments || [];
+  const visibleSegments = useMemo(
+    () => selectedSegments.slice(0, visibleSegmentCount),
+    [selectedSegments, visibleSegmentCount],
+  );
+  const hasMoreSegments = visibleSegments.length < selectedSegments.length;
   const doneTasks = useMemo(() => tasks.filter((task) => task.status === "done" && task.result), [tasks]);
   const visibleTasks = useMemo(
     () => (isTaskOrderDescending ? [...tasks].reverse() : tasks),
@@ -595,6 +668,9 @@ function App() {
     computeDeviceRef.current = computeDevice;
   }, [computeDevice]);
   useEffect(() => {
+    ttsTaskIdRef.current = ttsTaskId;
+  }, [ttsTaskId]);
+  useEffect(() => {
     queuePausedRef.current = isQueuePaused;
   }, [isQueuePaused]);
   useEffect(() => {
@@ -605,13 +681,14 @@ function App() {
     if (resultScrollRef.current) {
       resultScrollRef.current.scrollTop = 0;
     }
+    setVisibleSegmentCount(SEGMENT_PAGE_SIZE);
   }, [selectedTaskId]);
 
   useEffect(() => {
     window.requestAnimationFrame(() => {
       document.querySelectorAll<HTMLTextAreaElement>(".segmentField textarea").forEach(resizeTextarea);
     });
-  }, [selectedTask?.id, selectedTask?.result]);
+  }, [selectedTask?.id, visibleSegments.length]);
 
   useEffect(() => {
     desktopApi.getModelStatus().then(setModelStatus).catch((err) => setError(err instanceof Error ? err.message : String(err)));
@@ -639,6 +716,7 @@ function App() {
         setSettings(merged);
         setWhisperModel(merged.whisperModel);
         setComputeDevice(merged.computeDevice);
+        setSettingsDirty(false);
       })
       .catch(() => undefined);
 
@@ -733,6 +811,54 @@ function App() {
         ),
       );
     });
+    const offTtsProgress = desktopApi.onTtsProgress(({ taskId, progress }) => {
+      setTtsTaskId(taskId);
+      setGlobalProgress(progress);
+      setTasks((current) =>
+        current.map((task) =>
+          task.id === taskId
+            ? {
+                ...task,
+                progress,
+                stageTimings: mergeStageTiming(task.stageTimings, progress),
+              }
+            : task,
+        ),
+      );
+    });
+    const offTtsDone = desktopApi.onTtsDone(({ taskId, result }) => {
+      setTtsTaskId(null);
+      setSavedPath(result.outputPath);
+      setGlobalProgress({ stage: "done", message: text.done, percent: 100 });
+      setTasks((current) =>
+        current.map((task) =>
+          task.id === taskId
+            ? {
+                ...task,
+                progress: { stage: "done", message: text.done, percent: 100 },
+              }
+            : task,
+        ),
+      );
+      desktopApi.getModelStatus().then(setModelStatus).catch(() => undefined);
+    });
+    const offTtsError = desktopApi.onTtsError(({ taskId, error: ttsError }) => {
+      setTtsTaskId(null);
+      setError(ttsError.message);
+      setGlobalProgress({ stage: "tts", message: ttsError.message, percent: 0 });
+      setTasks((current) =>
+        current.map((task) =>
+          task.id === taskId ? { ...task, error: ttsError.message, progress: null } : task,
+        ),
+      );
+    });
+    const offTtsCanceled = desktopApi.onTtsCanceled(({ taskId, message }) => {
+      setTtsTaskId(null);
+      setGlobalProgress({ stage: "tts", message: message || text.ttsCanceled, percent: 0 });
+      setTasks((current) =>
+        current.map((task) => (task.id === taskId ? { ...task, progress: null, error: message || text.ttsCanceled } : task)),
+      );
+    });
     const offDependencyProgress = desktopApi.onDependencyProgress((nextProgress) => {
       const taskId = currentTaskIdRef.current;
       if (!taskId) {
@@ -756,6 +882,10 @@ function App() {
       offTranslateProgress();
       offTranslateDone();
       offTranslateError();
+      offTtsProgress();
+      offTtsDone();
+      offTtsError();
+      offTtsCanceled();
       offDependencyProgress();
     };
   }, []);
@@ -872,6 +1002,10 @@ function App() {
   }
 
   async function startQueue() {
+    if (ttsTaskIdRef.current) {
+      setError(text.ttsRunning);
+      return;
+    }
     if (!tasks.some((task) => task.status === "queued")) {
       setError(text.chooseFirst);
       return;
@@ -938,7 +1072,7 @@ function App() {
 
   function removeTask(taskId: string) {
     const target = tasksRef.current.find((task) => task.id === taskId);
-    if (!target || target.status === "running") {
+    if (!target || target.status === "running" || taskId === ttsTaskIdRef.current) {
       return;
     }
     const nextTasks = tasksRef.current.filter((task) => task.id !== taskId);
@@ -997,6 +1131,7 @@ function App() {
       },
     }));
     setSettingsSaved(false);
+    setSettingsDirty(true);
   }
 
   function updateNetwork(patch: Partial<NetworkSettings>) {
@@ -1008,6 +1143,7 @@ function App() {
       },
     }));
     setSettingsSaved(false);
+    setSettingsDirty(true);
   }
 
   function updateAudioEnhancement(patch: Partial<AudioEnhancementSettings>) {
@@ -1019,6 +1155,7 @@ function App() {
       },
     }));
     setSettingsSaved(false);
+    setSettingsDirty(true);
   }
 
   function updateWhisperAdvanced(patch: Partial<WhisperAdvancedSettings>) {
@@ -1030,6 +1167,19 @@ function App() {
       },
     }));
     setSettingsSaved(false);
+    setSettingsDirty(true);
+  }
+
+  function updateTts(patch: Partial<TtsSettings>) {
+    setSettings((current) => ({
+      ...current,
+      tts: {
+        ...current.tts,
+        ...patch,
+      },
+    }));
+    setSettingsSaved(false);
+    setSettingsDirty(true);
   }
 
   async function retryDependencies() {
@@ -1046,6 +1196,20 @@ function App() {
     }
   }
 
+  async function installTtsDependencies() {
+    setError(null);
+    setGlobalProgress({ stage: "tts-dependencies", message: text.installingTtsDependencies, percent: 1 });
+    try {
+      await desktopApi.updateSettings(mergeSettings({ ...settings, whisperModel, computeDevice }));
+      await desktopApi.installTtsDependencies();
+      setGlobalProgress({ stage: "tts-dependencies", message: "VoxCPM2 \u4f9d\u8d56\u5df2\u5c31\u7eea\u3002", percent: 100 });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setGlobalProgress({ stage: "tts-dependencies", message, percent: 0 });
+      setError(message);
+    }
+  }
+
   async function persistRuntimeSettings(patch: Partial<AppSettings>) {
     const nextSettings = mergeSettings({
       ...settings,
@@ -1058,6 +1222,7 @@ function App() {
     try {
       const saved = await desktopApi.updateSettings(nextSettings);
       setSettings(mergeSettings(saved));
+      setSettingsDirty(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -1067,6 +1232,7 @@ function App() {
     const saved = await desktopApi.updateSettings(mergeSettings({ ...settings, whisperModel, computeDevice }));
     setSettings(mergeSettings(saved));
     setSettingsSaved(true);
+    setSettingsDirty(false);
   }
 
   function applyDeepSeekPreset() {
@@ -1085,8 +1251,10 @@ function App() {
       network: current.network,
       audioEnhancement: current.audioEnhancement,
       whisperAdvanced: current.whisperAdvanced,
+      tts: current.tts,
     }));
     setSettingsSaved(false);
+    setSettingsDirty(true);
   }
 
   async function saveSelectedTxt() {
@@ -1118,6 +1286,64 @@ function App() {
     });
     if (response.saved && response.path) {
       setSavedPath(response.path);
+    }
+  }
+
+  async function generateSelectedChineseVoice() {
+    if (!selectedTask || !selectedTask.result) {
+      setError(text.noResultToSave);
+      return;
+    }
+    if (!settings.tts.enabled) {
+      setError(text.ttsNotEnabled);
+      return;
+    }
+    if (!hasChineseTranslation(selectedTask.result)) {
+      setError(text.noChineseTranslation);
+      return;
+    }
+    setError(null);
+    setSavedPath(null);
+    setTtsTaskId(selectedTask.id);
+    setTasks((current) =>
+      current.map((task) =>
+        task.id === selectedTask.id
+          ? { ...task, error: null, progress: { stage: "tts", message: text.ttsRunning, percent: 1 } }
+          : task,
+      ),
+    );
+    try {
+      await desktopApi.updateSettings(mergeSettings({ ...settings, whisperModel, computeDevice }));
+      const baseName = exportBaseName(selectedTask);
+      const response = await desktopApi.startTts({
+        taskId: selectedTask.id,
+        mediaPath: selectedTask.file.path,
+        segments: selectedTask.result.segments,
+        tts: settings.tts,
+        defaultFileName: `${baseName}.zh.wav`,
+        defaultDirectory: selectedTask.file.path.replace(/[\\/][^\\/]*$/, ""),
+      });
+      if (!response.started) {
+        setTtsTaskId(null);
+        setTasks((current) => current.map((task) => (task.id === selectedTask.id ? { ...task, progress: null } : task)));
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setTtsTaskId(null);
+      setError(message);
+      setGlobalProgress({ stage: "tts", message, percent: 0 });
+      setTasks((current) =>
+        current.map((task) => (task.id === selectedTask.id ? { ...task, error: message, progress: null } : task)),
+      );
+    }
+  }
+
+  async function cancelChineseVoice() {
+    await desktopApi.cancelTts();
+    const taskId = ttsTaskIdRef.current;
+    if (taskId) {
+      setTtsTaskId(null);
+      setTasks((current) => current.map((task) => (task.id === taskId ? { ...task, progress: null } : task)));
     }
   }
 
@@ -1256,7 +1482,7 @@ function App() {
                     event.stopPropagation();
                     removeTask(task.id);
                   }}
-                  disabled={task.status === "running"}
+                  disabled={task.status === "running" || task.id === ttsTaskId}
                 >
                   <Trash2 size={15} />
                 </button>
@@ -1276,6 +1502,9 @@ function App() {
                     } - ${selectedTask.result.segments.length} ${text.segments}`
                   : selectedTask?.progress?.message || text.emptyResult}
               </p>
+              {selectedTask?.result && selectedTask.progress?.message && (
+                <p className="progressMessage">{selectedTask.progress.message}</p>
+              )}
               {selectedTask && <ProgressMetrics task={selectedTask} />}
             </div>
             <div className="exportActions">
@@ -1287,46 +1516,90 @@ function App() {
                 <Download size={18} />
                 {text.saveSrt}
               </button>
+              {ttsTaskId === selectedTask?.id ? (
+                <button className="secondaryButton dangerButton" onClick={() => void cancelChineseVoice()}>
+                  <Square size={18} />
+                  {text.cancelChineseVoice}
+                </button>
+              ) : (
+                <button
+                  className="secondaryButton"
+                  onClick={() => void generateSelectedChineseVoice()}
+                  disabled={
+                    selectedTask?.status !== "done" ||
+                    !selectedTask?.result ||
+                    !selectedTaskHasChinese ||
+                    !settings.tts.enabled ||
+                    Boolean(ttsTaskId)
+                  }
+                >
+                  <Volume2 size={18} />
+                  {text.generateChineseVoice}
+                </button>
+              )}
             </div>
           </div>
 
           <div className="segments" ref={resultScrollRef}>
             {!selectedTask?.result && <div className="emptyState">{selectedTask?.error || text.emptyResult}</div>}
-            {selectedTask?.result?.segments.map((segment, index) => (
-              <article className="segment" key={`${segment.start}-${segment.end}-${index}`}>
-                <time>
-                  {formatTimestamp(segment.start)} - {formatTimestamp(segment.end)}
-                </time>
-                {segment.translatedText !== null && segment.translatedText !== undefined ? (
-                  <>
-                    <label className="segmentField">
-                      <span>{text.source}</span>
-                      <textarea
-                        value={segment.sourceText}
-                        onChange={(event) => handleSegmentTextChange(event, selectedTask.id, index, "sourceText")}
-                        rows={1}
-                      />
-                    </label>
-                    <label className="segmentField">
-                      <span>{text.translation}</span>
-                      <textarea
-                        value={segment.translatedText}
-                        onChange={(event) => handleSegmentTextChange(event, selectedTask.id, index, "translatedText")}
-                        rows={1}
-                      />
-                    </label>
-                  </>
-                ) : (
-                  <label className="segmentField">
-                    <textarea
-                      value={segment.sourceText}
-                      onChange={(event) => handleSegmentTextChange(event, selectedTask.id, index, "sourceText")}
-                      rows={1}
-                    />
-                  </label>
-                )}
-              </article>
-            ))}
+            {selectedTask?.result && selectedSegments.length > visibleSegments.length && (
+              <div className="segmentWindowNotice">
+                {text.showingSegments}: {visibleSegments.length} / {selectedSegments.length}
+              </div>
+            )}
+            {selectedTask && visibleSegments.map((segment, index) => {
+              const isBilingual = segment.translatedText !== null && segment.translatedText !== undefined;
+              return (
+                <article className={`segment ${isBilingual ? "bilingualSegment" : "sourceOnlySegment"}`} key={`${segment.start}-${segment.end}-${index}`}>
+                  <div className="segmentMeta">
+                    <time>
+                      {formatTimestamp(segment.start)} - {formatTimestamp(segment.end)}
+                    </time>
+                    <span>{`${text.segmentIndex} ${index + 1} ${text.segmentUnit}`}</span>
+                    <span>{isBilingual ? text.bilingualSegment : text.sourceOnlySegment}</span>
+                  </div>
+                  <div className="segmentContent">
+                    {isBilingual ? (
+                      <>
+                        <label className="segmentField">
+                          <span>{text.source}</span>
+                          <textarea
+                            value={segment.sourceText}
+                            onChange={(event) => handleSegmentTextChange(event, selectedTask.id, index, "sourceText")}
+                            rows={1}
+                          />
+                        </label>
+                        <label className="segmentField">
+                          <span>{text.translation}</span>
+                          <textarea
+                            value={segment.translatedText ?? ""}
+                            onChange={(event) => handleSegmentTextChange(event, selectedTask.id, index, "translatedText")}
+                            rows={1}
+                          />
+                        </label>
+                      </>
+                    ) : (
+                      <label className="segmentField">
+                        <span>{text.source}</span>
+                        <textarea
+                          value={segment.sourceText}
+                          onChange={(event) => handleSegmentTextChange(event, selectedTask.id, index, "sourceText")}
+                          rows={1}
+                        />
+                      </label>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+            {selectedTask?.result && hasMoreSegments && (
+              <button
+                className="secondaryButton loadMoreButton"
+                onClick={() => setVisibleSegmentCount((current) => current + SEGMENT_PAGE_SIZE)}
+              >
+                {text.loadMoreSegments} ({visibleSegments.length} / {selectedSegments.length}，{text.segmentRemaining} {selectedSegments.length - visibleSegments.length})
+              </button>
+            )}
           </div>
         </section>
       </section>
@@ -1350,7 +1623,7 @@ function App() {
       <SettingsDrawer
         open={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        isRunning={isQueueRunning}
+        isRunning={isQueueRunning || Boolean(ttsTaskId)}
         modelStatus={modelStatus}
         hardwareStatus={hardwareStatus}
         whisperModel={whisperModel}
@@ -1368,10 +1641,13 @@ function App() {
         updateNetwork={updateNetwork}
         updateAudioEnhancement={updateAudioEnhancement}
         updateWhisperAdvanced={updateWhisperAdvanced}
+        updateTts={updateTts}
         applyDeepSeekPreset={applyDeepSeekPreset}
         saveSettings={saveSettings}
         retryDependencies={retryDependencies}
+        installTtsDependencies={installTtsDependencies}
         settingsSaved={settingsSaved}
+        settingsDirty={settingsDirty}
       />
     </main>
   );
@@ -1392,10 +1668,13 @@ function SettingsDrawer({
   updateNetwork,
   updateAudioEnhancement,
   updateWhisperAdvanced,
+  updateTts,
   applyDeepSeekPreset,
   saveSettings,
   retryDependencies,
+  installTtsDependencies,
   settingsSaved,
+  settingsDirty,
 }: {
   open: boolean;
   onClose: () => void;
@@ -1411,11 +1690,17 @@ function SettingsDrawer({
   updateNetwork: (patch: Partial<NetworkSettings>) => void;
   updateAudioEnhancement: (patch: Partial<AudioEnhancementSettings>) => void;
   updateWhisperAdvanced: (patch: Partial<WhisperAdvancedSettings>) => void;
+  updateTts: (patch: Partial<TtsSettings>) => void;
   applyDeepSeekPreset: () => void;
   saveSettings: () => void;
   retryDependencies: () => void;
+  installTtsDependencies: () => void;
   settingsSaved: boolean;
+  settingsDirty: boolean;
 }) {
+  const [activeSection, setActiveSection] = useState<SettingsSection>("recognition");
+  const activeSectionLabel = SETTINGS_SECTIONS.find((section) => section.key === activeSection)?.label || text.settings;
+
   function applyRecognitionPreset(preset: RecognitionPreset) {
     updateAudioEnhancement(preset.audioEnhancement);
     updateWhisperAdvanced({
@@ -1429,366 +1714,477 @@ function SettingsDrawer({
       <div className="drawerHeader">
         <div>
           <p className="eyebrow">{text.settings}</p>
-          <h2>{text.aiTranslation}</h2>
+          <h2>{activeSectionLabel}</h2>
         </div>
-        <button className="secondaryButton iconOnly" onClick={onClose}>
+        <button className="secondaryButton iconOnly" onClick={onClose} aria-label="关闭设置">
           <X size={18} />
         </button>
       </div>
 
-      <div className="drawerBody">
-        <div className="statusBlock">
-          <div className="blockTitleRow">
-            <h3>{text.recognitionPresets}</h3>
-            <SlidersHorizontal size={16} />
-          </div>
-          <div className="presetGrid">
-            {RECOGNITION_PRESETS.map((preset) => (
-              <button
-                key={preset.key}
-                className="secondaryButton presetButton"
-                onClick={() => applyRecognitionPreset(preset)}
-                disabled={isRunning}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-          <p className="hint">{text.whisperAdvancedHint}</p>
-        </div>
-
-        <div className="statusBlock">
-          <h3>{text.modelChoice}</h3>
-          <select
-            className="modelSelect"
-            value={whisperModel}
-            onChange={(event) => setWhisperModel(event.target.value as WhisperModelName)}
-            disabled={isRunning}
+      <div className="drawerTabs" role="tablist" aria-label={text.settings}>
+        {SETTINGS_SECTIONS.map((section) => (
+          <button
+            key={section.key}
+            className={activeSection === section.key ? "active" : ""}
+            onClick={() => setActiveSection(section.key)}
+            role="tab"
+            aria-selected={activeSection === section.key}
           >
-            {WHISPER_MODELS.map((model) => (
-              <option key={model.value} value={model.value}>
-                {model.label} - {model.description}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="statusBlock">
-          <h3>{text.compute}</h3>
-          <div className="segmented">
-            {(["auto", "cpu", "cuda"] as ComputeDevice[]).map((device) => (
-              <button
-                key={device}
-                className={computeDevice === device ? "active" : ""}
-                onClick={() => setComputeDevice(device)}
-                disabled={isRunning}
-              >
-                {device === "auto" ? text.auto : device.toUpperCase()}
-              </button>
-            ))}
-          </div>
-          <p className="hint multiline">{hardwareSummary(hardwareStatus)}</p>
-        </div>
-
-        <div className="statusBlock">
-          <div className="blockTitleRow">
-            <h3>{text.audioEnhancement}</h3>
-            <SlidersHorizontal size={16} />
-          </div>
-          <p className="hint">{text.audioEnhancementHint}</p>
-          <label className="toggleField">
-            <input
-              type="checkbox"
-              checked={settings.audioEnhancement.enabled}
-              onChange={(event) => updateAudioEnhancement({ enabled: event.target.checked })}
-              disabled={isRunning}
-            />
-            <span>{text.enableAudioEnhancement}</span>
-          </label>
-          <div className="fieldGrid">
-            <label className="toggleField">
-              <input
-                type="checkbox"
-                checked={settings.audioEnhancement.normalize}
-                onChange={(event) => updateAudioEnhancement({ normalize: event.target.checked })}
-                disabled={isRunning || !settings.audioEnhancement.enabled}
-              />
-              <span>{text.normalizeAudio}</span>
-            </label>
-            <label className="toggleField">
-              <input
-                type="checkbox"
-                checked={settings.audioEnhancement.compression}
-                onChange={(event) => updateAudioEnhancement({ compression: event.target.checked })}
-                disabled={isRunning || !settings.audioEnhancement.enabled}
-              />
-              <span>{text.compressAudio}</span>
-            </label>
-            <label className="toggleField">
-              <input
-                type="checkbox"
-                checked={settings.audioEnhancement.denoise}
-                onChange={(event) => updateAudioEnhancement({ denoise: event.target.checked })}
-                disabled={isRunning || !settings.audioEnhancement.enabled}
-              />
-              <span>{text.denoiseAudio}</span>
-            </label>
-            <label className="toggleField">
-              <input
-                type="checkbox"
-                checked={settings.audioEnhancement.mono}
-                onChange={(event) => updateAudioEnhancement({ mono: event.target.checked })}
-                disabled={isRunning || !settings.audioEnhancement.enabled}
-              />
-              <span>{text.monoAudio}</span>
-            </label>
-            <NumberField
-              label={text.targetPeak}
-              value={settings.audioEnhancement.targetPeak}
-              disabled={isRunning || !settings.audioEnhancement.enabled}
-              step="0.05"
-              onChange={(targetPeak) => updateAudioEnhancement({ targetPeak })}
-            />
-            <NumberField
-              label={text.noiseGateDb}
-              value={settings.audioEnhancement.noiseGateDb}
-              disabled={isRunning || !settings.audioEnhancement.enabled || !settings.audioEnhancement.denoise}
-              onChange={(noiseGateDb) => updateAudioEnhancement({ noiseGateDb })}
-            />
-          </div>
-        </div>
-
-        <div className="statusBlock">
-          <div className="blockTitleRow">
-            <h3>{text.whisperAdvanced}</h3>
-            <SlidersHorizontal size={16} />
-          </div>
-          <p className="hint">{text.whisperAdvancedHint}</p>
-          <label className="field">
-            <span>{text.recognitionProfile}</span>
-            <select
-              className="modelSelect"
-              value={settings.whisperAdvanced.profile}
-              onChange={(event) => {
-                const profile = event.target.value as WhisperAdvancedSettings["profile"];
-                const presets: Record<WhisperAdvancedSettings["profile"], Partial<WhisperAdvancedSettings>> = {
-                  fast: { profile, beamSize: 3, vadFilter: true, noSpeechThreshold: 0.6, conditionOnPreviousText: false },
-                  balanced: { profile, beamSize: 5, vadFilter: true, noSpeechThreshold: 0.6, conditionOnPreviousText: false },
-                  accurate: { profile, beamSize: 8, vadFilter: true, noSpeechThreshold: 0.55, conditionOnPreviousText: true },
-                  asmr: { profile, beamSize: 8, vadFilter: false, noSpeechThreshold: 0.45, conditionOnPreviousText: true },
-                };
-                updateWhisperAdvanced(presets[profile]);
-              }}
-              disabled={isRunning}
-            >
-              <option value="fast">{text.profileFast}</option>
-              <option value="balanced">{text.profileBalanced}</option>
-              <option value="accurate">{text.profileAccurate}</option>
-              <option value="asmr">{text.profileAsmr}</option>
-            </select>
-          </label>
-          <div className="fieldGrid">
-            <NumberField
-              label={text.beamSize}
-              value={settings.whisperAdvanced.beamSize}
-              disabled={isRunning}
-              onChange={(beamSize) => updateWhisperAdvanced({ beamSize, profile: settings.whisperAdvanced.profile })}
-            />
-            <NumberField
-              label={text.noSpeechThreshold}
-              value={settings.whisperAdvanced.noSpeechThreshold}
-              disabled={isRunning}
-              step="0.05"
-              onChange={(noSpeechThreshold) => updateWhisperAdvanced({ noSpeechThreshold })}
-            />
-            <label className="toggleField">
-              <input
-                type="checkbox"
-                checked={settings.whisperAdvanced.vadFilter}
-                onChange={(event) => updateWhisperAdvanced({ vadFilter: event.target.checked })}
-                disabled={isRunning}
-              />
-              <span>{text.vadFilter}</span>
-            </label>
-            <label className="toggleField">
-              <input
-                type="checkbox"
-                checked={settings.whisperAdvanced.conditionOnPreviousText}
-                onChange={(event) => updateWhisperAdvanced({ conditionOnPreviousText: event.target.checked })}
-                disabled={isRunning}
-              />
-              <span>{text.conditionOnPreviousText}</span>
-            </label>
-          </div>
-          <label className="field">
-            <span>{text.initialPrompt}</span>
-            <textarea
-              value={settings.whisperAdvanced.initialPrompt}
-              onChange={(event) => updateWhisperAdvanced({ initialPrompt: event.target.value })}
-              disabled={isRunning}
-              placeholder={text.initialPromptPlaceholder}
-              rows={3}
-            />
-          </label>
-        </div>
-
-        <div className="statusBlock">
-          <div className="blockTitleRow">
-            <h3>{text.network}</h3>
-            <SlidersHorizontal size={16} />
-          </div>
-          <label className="toggleField">
-            <input
-              type="checkbox"
-              checked={settings.network.proxyEnabled}
-              onChange={(event) => updateNetwork({ proxyEnabled: event.target.checked })}
-              disabled={isRunning}
-            />
-            <span>{text.proxyEnabled}</span>
-          </label>
-          <div className="fieldGrid">
-            <label className="field">
-              <span>{text.proxyType}</span>
-              <select
-                className="modelSelect"
-                value={settings.network.proxyType}
-                onChange={(event) => updateNetwork({ proxyType: event.target.value as ProxyType })}
-                disabled={isRunning || !settings.network.proxyEnabled}
-              >
-                <option value="http">HTTP</option>
-                <option value="socks5">SOCKS5</option>
-              </select>
-            </label>
-            <TextField
-              label={text.proxyHost}
-              value={settings.network.proxyHost}
-              disabled={isRunning || !settings.network.proxyEnabled}
-              placeholder="127.0.0.1"
-              onChange={(proxyHost) => updateNetwork({ proxyHost })}
-            />
-            <TextField
-              label={text.proxyPort}
-              value={settings.network.proxyPort}
-              disabled={isRunning || !settings.network.proxyEnabled}
-              placeholder="7890"
-              onChange={(proxyPort) => updateNetwork({ proxyPort })}
-            />
-          </div>
-          <p className="hint">{text.proxyHint}</p>
-          <button className="secondaryButton compactButton" onClick={retryDependencies} disabled={isRunning}>
-            <RotateCcw size={16} />
-            {text.retryDependencies}
+            {section.label}
           </button>
-        </div>
+        ))}
+      </div>
 
-        <div className="statusBlock">
-          <div className="blockTitleRow">
-            <h3>{text.aiTranslation}</h3>
-            <SlidersHorizontal size={16} />
-          </div>
-          <p className="hint">{text.aiOnlyHint}</p>
-          <button className="secondaryButton compactButton" onClick={applyDeepSeekPreset} disabled={isRunning}>
-            {text.deepseekPreset}
-          </button>
-          <div className="fieldGrid">
-            <TextField label={text.baseUrl} value={settings.aiTranslation.baseUrl} disabled={isRunning} onChange={(baseUrl) => updateAiTranslation({ baseUrl })} />
-            <TextField label={text.apiKey} value={settings.aiTranslation.apiKey} disabled={isRunning} type="password" placeholder="sk-..." onChange={(apiKey) => updateAiTranslation({ apiKey })} />
-            <TextField label={text.model} value={settings.aiTranslation.model} disabled={isRunning} onChange={(model) => updateAiTranslation({ model })} />
-            <NumberField label={text.temperature} value={settings.aiTranslation.temperature} disabled={isRunning} step="0.1" onChange={(temperature) => updateAiTranslation({ temperature })} />
-            <NumberField label={text.topP} value={settings.aiTranslation.topP} disabled={isRunning} step="0.1" onChange={(topP) => updateAiTranslation({ topP })} />
-            <TextField label={text.topK} value={String(settings.aiTranslation.topK ?? "")} disabled={isRunning} placeholder={text.omitIfEmpty} onChange={(topK) => updateAiTranslation({ topK })} />
-            <NumberField label={text.maxTokens} value={settings.aiTranslation.maxTokens} disabled={isRunning} onChange={(maxTokens) => updateAiTranslation({ maxTokens })} />
-            <NumberField label={text.timeoutSeconds} value={settings.aiTranslation.timeoutSeconds} disabled={isRunning} onChange={(timeoutSeconds) => updateAiTranslation({ timeoutSeconds })} />
-            <NumberField label={text.retries} value={settings.aiTranslation.retries} disabled={isRunning} onChange={(retries) => updateAiTranslation({ retries })} />
-            <NumberField label={text.contextWindow} value={settings.aiTranslation.contextWindow} disabled={isRunning} onChange={(contextWindow) => updateAiTranslation({ contextWindow })} />
-            <NumberField label={text.contextOverlap} value={settings.aiTranslation.contextOverlap} disabled={isRunning} onChange={(contextOverlap) => updateAiTranslation({ contextOverlap })} />
-            <TextField label={text.reasoningEffort} value={settings.aiTranslation.reasoningEffort || ""} disabled={isRunning} onChange={(reasoningEffort) => updateAiTranslation({ reasoningEffort })} />
-          </div>
-          <div className="subBlock">
-            <h4>{text.aiProxy}</h4>
-            <label className="toggleField">
-              <input
-                type="checkbox"
-                checked={settings.aiTranslation.proxyEnabled}
-                onChange={(event) => updateAiTranslation({ proxyEnabled: event.target.checked })}
-                disabled={isRunning}
-              />
-              <span>{text.proxyEnabled}</span>
-            </label>
-            <div className="fieldGrid">
+      <div className="drawerBody">
+        {activeSection === "recognition" && (
+          <>
+            <div className="statusBlock">
+              <div className="blockTitleRow">
+                <h3>{text.recognitionPresets}</h3>
+                <SlidersHorizontal size={16} />
+              </div>
+              <div className="presetGrid">
+                {RECOGNITION_PRESETS.map((preset) => (
+                  <button
+                    key={preset.key}
+                    className="secondaryButton presetButton"
+                    onClick={() => applyRecognitionPreset(preset)}
+                    disabled={isRunning}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <p className="hint">{text.whisperAdvancedHint}</p>
+            </div>
+
+            <div className="statusBlock">
+              <div className="blockTitleRow">
+                <h3>{text.whisperAdvanced}</h3>
+                <SlidersHorizontal size={16} />
+              </div>
+              <p className="hint">{text.whisperAdvancedHint}</p>
               <label className="field">
-                <span>{text.proxyType}</span>
+                <span>{text.recognitionProfile}</span>
                 <select
                   className="modelSelect"
-                  value={settings.aiTranslation.proxyType}
-                  onChange={(event) => updateAiTranslation({ proxyType: event.target.value as ProxyType })}
-                  disabled={isRunning || !settings.aiTranslation.proxyEnabled}
+                  value={settings.whisperAdvanced.profile}
+                  onChange={(event) => {
+                    const profile = event.target.value as WhisperAdvancedSettings["profile"];
+                    const presets: Record<WhisperAdvancedSettings["profile"], Partial<WhisperAdvancedSettings>> = {
+                      fast: { profile, beamSize: 3, vadFilter: true, noSpeechThreshold: 0.6, conditionOnPreviousText: false },
+                      balanced: { profile, beamSize: 5, vadFilter: true, noSpeechThreshold: 0.6, conditionOnPreviousText: false },
+                      accurate: { profile, beamSize: 8, vadFilter: true, noSpeechThreshold: 0.55, conditionOnPreviousText: true },
+                      asmr: { profile, beamSize: 8, vadFilter: false, noSpeechThreshold: 0.45, conditionOnPreviousText: true },
+                    };
+                    updateWhisperAdvanced(presets[profile]);
+                  }}
+                  disabled={isRunning}
                 >
-                  <option value="http">HTTP</option>
-                  <option value="socks5">SOCKS5</option>
+                  <option value="fast">{text.profileFast}</option>
+                  <option value="balanced">{text.profileBalanced}</option>
+                  <option value="accurate">{text.profileAccurate}</option>
+                  <option value="asmr">{text.profileAsmr}</option>
                 </select>
               </label>
-              <TextField
-                label={text.proxyHost}
-                value={settings.aiTranslation.proxyHost}
-                disabled={isRunning || !settings.aiTranslation.proxyEnabled}
-                placeholder="127.0.0.1"
-                onChange={(proxyHost) => updateAiTranslation({ proxyHost })}
+              <div className="fieldGrid">
+                <NumberField
+                  label={text.beamSize}
+                  value={settings.whisperAdvanced.beamSize}
+                  disabled={isRunning}
+                  onChange={(beamSize) => updateWhisperAdvanced({ beamSize, profile: settings.whisperAdvanced.profile })}
+                />
+                <NumberField
+                  label={text.noSpeechThreshold}
+                  value={settings.whisperAdvanced.noSpeechThreshold}
+                  disabled={isRunning}
+                  step="0.05"
+                  onChange={(noSpeechThreshold) => updateWhisperAdvanced({ noSpeechThreshold })}
+                />
+                <label className="toggleField">
+                  <input
+                    type="checkbox"
+                    checked={settings.whisperAdvanced.vadFilter}
+                    onChange={(event) => updateWhisperAdvanced({ vadFilter: event.target.checked })}
+                    disabled={isRunning}
+                  />
+                  <span>{text.vadFilter}</span>
+                </label>
+                <label className="toggleField">
+                  <input
+                    type="checkbox"
+                    checked={settings.whisperAdvanced.conditionOnPreviousText}
+                    onChange={(event) => updateWhisperAdvanced({ conditionOnPreviousText: event.target.checked })}
+                    disabled={isRunning}
+                  />
+                  <span>{text.conditionOnPreviousText}</span>
+                </label>
+              </div>
+              <label className="field">
+                <span>{text.initialPrompt}</span>
+                <textarea
+                  value={settings.whisperAdvanced.initialPrompt}
+                  onChange={(event) => updateWhisperAdvanced({ initialPrompt: event.target.value })}
+                  disabled={isRunning}
+                  placeholder={text.initialPromptPlaceholder}
+                  rows={3}
+                />
+              </label>
+            </div>
+          </>
+        )}
+
+        {activeSection === "ai" && (
+          <div className="statusBlock">
+            <div className="blockTitleRow">
+              <h3>{text.aiTranslation}</h3>
+              <SlidersHorizontal size={16} />
+            </div>
+            <p className="hint">{text.aiOnlyHint}</p>
+            <button className="secondaryButton compactButton" onClick={applyDeepSeekPreset} disabled={isRunning}>
+              {text.deepseekPreset}
+            </button>
+            <div className="fieldGrid">
+              <TextField label={text.baseUrl} value={settings.aiTranslation.baseUrl} disabled={isRunning} onChange={(baseUrl) => updateAiTranslation({ baseUrl })} />
+              <TextField label={text.apiKey} value={settings.aiTranslation.apiKey} disabled={isRunning} type="password" placeholder="sk-..." onChange={(apiKey) => updateAiTranslation({ apiKey })} />
+              <TextField label={text.model} value={settings.aiTranslation.model} disabled={isRunning} onChange={(model) => updateAiTranslation({ model })} />
+              <NumberField label={text.temperature} value={settings.aiTranslation.temperature} disabled={isRunning} step="0.1" onChange={(temperature) => updateAiTranslation({ temperature })} />
+              <NumberField label={text.topP} value={settings.aiTranslation.topP} disabled={isRunning} step="0.1" onChange={(topP) => updateAiTranslation({ topP })} />
+              <TextField label={text.topK} value={String(settings.aiTranslation.topK ?? "")} disabled={isRunning} placeholder={text.omitIfEmpty} onChange={(topK) => updateAiTranslation({ topK })} />
+              <NumberField label={text.maxTokens} value={settings.aiTranslation.maxTokens} disabled={isRunning} onChange={(maxTokens) => updateAiTranslation({ maxTokens })} />
+              <NumberField label={text.timeoutSeconds} value={settings.aiTranslation.timeoutSeconds} disabled={isRunning} onChange={(timeoutSeconds) => updateAiTranslation({ timeoutSeconds })} />
+              <NumberField label={text.retries} value={settings.aiTranslation.retries} disabled={isRunning} onChange={(retries) => updateAiTranslation({ retries })} />
+              <NumberField label={text.contextWindow} value={settings.aiTranslation.contextWindow} disabled={isRunning} onChange={(contextWindow) => updateAiTranslation({ contextWindow })} />
+              <NumberField label={text.contextOverlap} value={settings.aiTranslation.contextOverlap} disabled={isRunning} onChange={(contextOverlap) => updateAiTranslation({ contextOverlap })} />
+              <TextField label={text.reasoningEffort} value={settings.aiTranslation.reasoningEffort || ""} disabled={isRunning} onChange={(reasoningEffort) => updateAiTranslation({ reasoningEffort })} />
+            </div>
+            <label className="toggleField">
+              <input
+                type="checkbox"
+                checked={settings.aiTranslation.thinking}
+                onChange={(event) => updateAiTranslation({ thinking: event.target.checked })}
+                disabled={isRunning}
               />
-              <TextField
-                label={text.proxyPort}
-                value={settings.aiTranslation.proxyPort}
-                disabled={isRunning || !settings.aiTranslation.proxyEnabled}
-                placeholder="7890"
-                onChange={(proxyPort) => updateAiTranslation({ proxyPort })}
+              <span>{text.thinking}</span>
+            </label>
+            <label className="field">
+              <span>{text.systemPrompt}</span>
+              <textarea
+                value={settings.aiTranslation.systemPrompt}
+                onChange={(event) => updateAiTranslation({ systemPrompt: event.target.value })}
+                disabled={isRunning}
+                rows={4}
+              />
+            </label>
+            <label className="field">
+              <span>{text.userPrompt}</span>
+              <textarea
+                value={settings.aiTranslation.userPromptTemplate}
+                onChange={(event) => updateAiTranslation({ userPromptTemplate: event.target.value })}
+                disabled={isRunning}
+                rows={4}
+              />
+            </label>
+          </div>
+        )}
+
+        {activeSection === "enhancement" && (
+          <div className="statusBlock">
+            <div className="blockTitleRow">
+              <h3>{text.audioEnhancement}</h3>
+              <SlidersHorizontal size={16} />
+            </div>
+            <p className="hint">{text.audioEnhancementHint}</p>
+            <label className="toggleField">
+              <input
+                type="checkbox"
+                checked={settings.audioEnhancement.enabled}
+                onChange={(event) => updateAudioEnhancement({ enabled: event.target.checked })}
+                disabled={isRunning}
+              />
+              <span>{text.enableAudioEnhancement}</span>
+            </label>
+            <div className="fieldGrid">
+              <label className="toggleField">
+                <input
+                  type="checkbox"
+                  checked={settings.audioEnhancement.normalize}
+                  onChange={(event) => updateAudioEnhancement({ normalize: event.target.checked })}
+                  disabled={isRunning || !settings.audioEnhancement.enabled}
+                />
+                <span>{text.normalizeAudio}</span>
+              </label>
+              <label className="toggleField">
+                <input
+                  type="checkbox"
+                  checked={settings.audioEnhancement.compression}
+                  onChange={(event) => updateAudioEnhancement({ compression: event.target.checked })}
+                  disabled={isRunning || !settings.audioEnhancement.enabled}
+                />
+                <span>{text.compressAudio}</span>
+              </label>
+              <label className="toggleField">
+                <input
+                  type="checkbox"
+                  checked={settings.audioEnhancement.denoise}
+                  onChange={(event) => updateAudioEnhancement({ denoise: event.target.checked })}
+                  disabled={isRunning || !settings.audioEnhancement.enabled}
+                />
+                <span>{text.denoiseAudio}</span>
+              </label>
+              <label className="toggleField">
+                <input
+                  type="checkbox"
+                  checked={settings.audioEnhancement.mono}
+                  onChange={(event) => updateAudioEnhancement({ mono: event.target.checked })}
+                  disabled={isRunning || !settings.audioEnhancement.enabled}
+                />
+                <span>{text.monoAudio}</span>
+              </label>
+              <NumberField
+                label={text.targetPeak}
+                value={settings.audioEnhancement.targetPeak}
+                disabled={isRunning || !settings.audioEnhancement.enabled}
+                step="0.05"
+                onChange={(targetPeak) => updateAudioEnhancement({ targetPeak })}
+              />
+              <NumberField
+                label={text.noiseGateDb}
+                value={settings.audioEnhancement.noiseGateDb}
+                disabled={isRunning || !settings.audioEnhancement.enabled || !settings.audioEnhancement.denoise}
+                onChange={(noiseGateDb) => updateAudioEnhancement({ noiseGateDb })}
               />
             </div>
-            <p className="hint">{text.aiProxyHint}</p>
           </div>
-          <label className="toggleField">
-            <input
-              type="checkbox"
-              checked={settings.aiTranslation.thinking}
-              onChange={(event) => updateAiTranslation({ thinking: event.target.checked })}
-              disabled={isRunning}
-            />
-            <span>{text.thinking}</span>
-          </label>
-          <label className="field">
-            <span>{text.systemPrompt}</span>
-            <textarea
-              value={settings.aiTranslation.systemPrompt}
-              onChange={(event) => updateAiTranslation({ systemPrompt: event.target.value })}
-              disabled={isRunning}
-              rows={4}
-            />
-          </label>
-          <label className="field">
-            <span>{text.userPrompt}</span>
-            <textarea
-              value={settings.aiTranslation.userPromptTemplate}
-              onChange={(event) => updateAiTranslation({ userPromptTemplate: event.target.value })}
-              disabled={isRunning}
-              rows={4}
-            />
-          </label>
-          <button className="primaryButton" onClick={saveSettings} disabled={isRunning}>
-            {text.saveSettings}
-          </button>
-          {settingsSaved && <p className="hint">{text.settingsSaved}</p>}
-        </div>
+        )}
 
-        <div className="statusBlock">
-          <h3>{text.models}</h3>
-          <StatusRow label={`Whisper ${whisperModel}`} ready={Boolean(modelStatus?.whisperDownloaded)} />
-          <StatusRow
-            label={settings.aiTranslation.model || "AI"}
-            ready={Boolean(settings.aiTranslation.apiKey)}
-            readyText={text.aiConfigured}
-            notReadyText={text.aiNotConfigured}
-          />
-          <p className="hint">{modelStatus?.modelsDir || text.modelDirFallback}</p>
+        {activeSection === "tts" && (
+          <div className="statusBlock">
+            <div className="blockTitleRow">
+              <h3>{text.tts}</h3>
+              <Volume2 size={16} />
+            </div>
+            <p className="hint">{text.ttsHint}</p>
+            <label className="toggleField">
+              <input
+                type="checkbox"
+                checked={settings.tts.enabled}
+                onChange={(event) => updateTts({ enabled: event.target.checked })}
+                disabled={isRunning}
+              />
+              <span>{text.enableTts}</span>
+            </label>
+            <label className="field">
+              <span>{text.ttsDevice}</span>
+              <select
+                className="modelSelect"
+                value={settings.tts.device}
+                onChange={(event) => updateTts({ device: event.target.value as ComputeDevice })}
+                disabled={isRunning || !settings.tts.enabled}
+              >
+                <option value="auto">{text.auto}</option>
+                <option value="cpu">CPU</option>
+                <option value="cuda">CUDA</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>{text.voicePrompt}</span>
+              <textarea
+                value={settings.tts.voicePrompt}
+                onChange={(event) => updateTts({ voicePrompt: event.target.value })}
+                disabled={isRunning || !settings.tts.enabled}
+                rows={2}
+              />
+            </label>
+            <div className="fieldGrid">
+              <NumberField
+                label={text.cfgValue}
+                value={settings.tts.cfgValue}
+                disabled={isRunning || !settings.tts.enabled}
+                step="0.1"
+                onChange={(cfgValue) => updateTts({ cfgValue })}
+              />
+              <NumberField
+                label={text.inferenceTimesteps}
+                value={settings.tts.inferenceTimesteps}
+                disabled={isRunning || !settings.tts.enabled}
+                onChange={(inferenceTimesteps) => updateTts({ inferenceTimesteps })}
+              />
+              <label className="toggleField wideToggle">
+                <input
+                  type="checkbox"
+                  checked={settings.tts.normalize}
+                  onChange={(event) => updateTts({ normalize: event.target.checked })}
+                  disabled={isRunning || !settings.tts.enabled}
+                />
+                <span>{text.normalizeTtsText}</span>
+              </label>
+            </div>
+            <button className="secondaryButton compactButton" onClick={installTtsDependencies} disabled={isRunning}>
+              <RotateCcw size={16} />
+              {text.installTtsDependencies}
+            </button>
+          </div>
+        )}
+
+        {activeSection === "models" && (
+          <>
+            <div className="statusBlock">
+              <h3>{text.modelChoice}</h3>
+              <select
+                className="modelSelect"
+                value={whisperModel}
+                onChange={(event) => setWhisperModel(event.target.value as WhisperModelName)}
+                disabled={isRunning}
+              >
+                {WHISPER_MODELS.map((model) => (
+                  <option key={model.value} value={model.value}>
+                    {model.label} - {model.description}
+                  </option>
+                ))}
+              </select>
+              <p className="hint">{text.runtimeSettingsSaved}</p>
+            </div>
+
+            <div className="statusBlock">
+              <h3>{text.compute}</h3>
+              <div className="segmented">
+                {(["auto", "cpu", "cuda"] as ComputeDevice[]).map((device) => (
+                  <button
+                    key={device}
+                    className={computeDevice === device ? "active" : ""}
+                    onClick={() => setComputeDevice(device)}
+                    disabled={isRunning}
+                  >
+                    {device === "auto" ? text.auto : device.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <p className="hint multiline">{hardwareSummary(hardwareStatus)}</p>
+            </div>
+
+            <div className="statusBlock">
+              <h3>{text.models}</h3>
+              <StatusRow label={`Whisper ${whisperModel}`} ready={Boolean(modelStatus?.whisperDownloaded)} />
+              <StatusRow label="VoxCPM2" ready={Boolean(modelStatus?.voxcpmDownloaded)} />
+              <StatusRow
+                label={settings.aiTranslation.model || "AI"}
+                ready={Boolean(settings.aiTranslation.apiKey)}
+                readyText={text.aiConfigured}
+                notReadyText={text.aiNotConfigured}
+              />
+              <p className="hint">{modelStatus?.modelsDir || text.modelDirFallback}</p>
+            </div>
+          </>
+        )}
+
+        {activeSection === "proxy" && (
+          <>
+            <div className="statusBlock">
+              <div className="blockTitleRow">
+                <h3>{text.network}</h3>
+                <SlidersHorizontal size={16} />
+              </div>
+              <label className="toggleField">
+                <input
+                  type="checkbox"
+                  checked={settings.network.proxyEnabled}
+                  onChange={(event) => updateNetwork({ proxyEnabled: event.target.checked })}
+                  disabled={isRunning}
+                />
+                <span>{text.proxyEnabled}</span>
+              </label>
+              <div className="fieldGrid">
+                <label className="field">
+                  <span>{text.proxyType}</span>
+                  <select
+                    className="modelSelect"
+                    value={settings.network.proxyType}
+                    onChange={(event) => updateNetwork({ proxyType: event.target.value as ProxyType })}
+                    disabled={isRunning || !settings.network.proxyEnabled}
+                  >
+                    <option value="http">HTTP</option>
+                    <option value="socks5">SOCKS5</option>
+                  </select>
+                </label>
+                <TextField
+                  label={text.proxyHost}
+                  value={settings.network.proxyHost}
+                  disabled={isRunning || !settings.network.proxyEnabled}
+                  placeholder="127.0.0.1"
+                  onChange={(proxyHost) => updateNetwork({ proxyHost })}
+                />
+                <TextField
+                  label={text.proxyPort}
+                  value={settings.network.proxyPort}
+                  disabled={isRunning || !settings.network.proxyEnabled}
+                  placeholder="7890"
+                  onChange={(proxyPort) => updateNetwork({ proxyPort })}
+                />
+              </div>
+              <p className="hint">{text.proxyHint}</p>
+              <button className="secondaryButton compactButton" onClick={retryDependencies} disabled={isRunning}>
+                <RotateCcw size={16} />
+                {text.retryDependencies}
+              </button>
+            </div>
+
+            <div className="statusBlock">
+              <div className="blockTitleRow">
+                <h3>{text.aiProxy}</h3>
+                <SlidersHorizontal size={16} />
+              </div>
+              <label className="toggleField">
+                <input
+                  type="checkbox"
+                  checked={settings.aiTranslation.proxyEnabled}
+                  onChange={(event) => updateAiTranslation({ proxyEnabled: event.target.checked })}
+                  disabled={isRunning}
+                />
+                <span>{text.proxyEnabled}</span>
+              </label>
+              <div className="fieldGrid">
+                <label className="field">
+                  <span>{text.proxyType}</span>
+                  <select
+                    className="modelSelect"
+                    value={settings.aiTranslation.proxyType}
+                    onChange={(event) => updateAiTranslation({ proxyType: event.target.value as ProxyType })}
+                    disabled={isRunning || !settings.aiTranslation.proxyEnabled}
+                  >
+                    <option value="http">HTTP</option>
+                    <option value="socks5">SOCKS5</option>
+                  </select>
+                </label>
+                <TextField
+                  label={text.proxyHost}
+                  value={settings.aiTranslation.proxyHost}
+                  disabled={isRunning || !settings.aiTranslation.proxyEnabled}
+                  placeholder="127.0.0.1"
+                  onChange={(proxyHost) => updateAiTranslation({ proxyHost })}
+                />
+                <TextField
+                  label={text.proxyPort}
+                  value={settings.aiTranslation.proxyPort}
+                  disabled={isRunning || !settings.aiTranslation.proxyEnabled}
+                  placeholder="7890"
+                  onChange={(proxyPort) => updateAiTranslation({ proxyPort })}
+                />
+              </div>
+              <p className="hint">{text.aiProxyHint}</p>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="drawerFooter">
+        <div>
+          <strong>{settingsDirty ? text.unsavedSettings : settingsSaved ? text.settingsSaved : text.saveSettingsHint}</strong>
+          <span>{activeSection === "models" ? text.runtimeSettingsSaved : text.saveSettingsHint}</span>
         </div>
+        <button className="primaryButton drawerSaveButton" onClick={saveSettings} disabled={isRunning || !settingsDirty}>
+          {text.saveSettings}
+        </button>
       </div>
     </aside>
   );

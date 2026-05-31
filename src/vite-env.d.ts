@@ -10,6 +10,7 @@ type AudioFile = {
 type ModelStatus = {
   modelsDir: string;
   whisperDownloaded: boolean;
+  voxcpmDownloaded?: boolean;
 };
 
 type HardwareStatus = {
@@ -75,6 +76,15 @@ type WhisperAdvancedSettings = {
   initialPrompt: string;
 };
 
+type TtsSettings = {
+  enabled: boolean;
+  device: ComputeDevice;
+  voicePrompt: string;
+  cfgValue: number;
+  inferenceTimesteps: number;
+  normalize: boolean;
+};
+
 type AppSettings = {
   whisperModel: WhisperModelName;
   computeDevice: ComputeDevice;
@@ -83,6 +93,7 @@ type AppSettings = {
   network: NetworkSettings;
   audioEnhancement: AudioEnhancementSettings;
   whisperAdvanced: WhisperAdvancedSettings;
+  tts: TtsSettings;
 };
 
 type TranscriptionProgress = {
@@ -148,6 +159,7 @@ interface Window {
     getHistory: () => Promise<HistoryTask[]>;
     upsertHistory: (task: HistoryTask) => Promise<{ saved: boolean; id: string }>;
     retryDependencies: () => Promise<{ ok: boolean }>;
+    installTtsDependencies: () => Promise<{ ok: boolean }>;
     cancelTranscription: () => Promise<{ canceled: boolean }>;
     startTranslation: (payload: {
       taskId: string;
@@ -157,6 +169,15 @@ interface Window {
       aiTranslationConfig?: AiTranslationConfig;
     }) => Promise<{ started: boolean }>;
     cancelTranslation: (taskId: string) => Promise<{ canceled: boolean }>;
+    startTts: (payload: {
+      taskId: string;
+      mediaPath: string;
+      segments: TranscriptionSegment[];
+      tts?: TtsSettings;
+      defaultFileName?: string;
+      defaultDirectory?: string;
+    }) => Promise<{ started: boolean; path?: string }>;
+    cancelTts: () => Promise<{ canceled: boolean }>;
     startTranscription: (payload: {
       audioPath: string;
       whisperModel?: WhisperModelName;
@@ -182,6 +203,10 @@ interface Window {
     onTranslateProgress: (callback: (payload: { taskId: string; progress: TranscriptionProgress }) => void) => () => void;
     onTranslateDone: (callback: (payload: { taskId: string; result: TranscriptionResult }) => void) => () => void;
     onTranslateError: (callback: (payload: { taskId: string; error: WorkerError }) => void) => () => void;
+    onTtsProgress: (callback: (payload: { taskId: string; progress: TranscriptionProgress }) => void) => () => void;
+    onTtsDone: (callback: (payload: { taskId: string; result: { outputPath: string; durationSeconds?: number } }) => void) => () => void;
+    onTtsError: (callback: (payload: { taskId: string; error: WorkerError }) => void) => () => void;
+    onTtsCanceled: (callback: (payload: { taskId: string; message?: string }) => void) => () => void;
     onDependencyProgress: (callback: (progress: TranscriptionProgress) => void) => () => void;
   };
 }
