@@ -1,6 +1,6 @@
 {
   "name": "asmr-trans",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Local desktop audio transcription for Japanese and Chinese audio.",
   "main": "electron/main.cjs",
