@@ -2,6 +2,8 @@
 
 Local desktop MVP for Japanese/Chinese audio/video transcription.
 
+[中文项目介绍](README.zh-CN.md)
+
 ## Batch Queue
 
 The desktop UI supports selecting multiple media files at once. Video files are decoded through their audio track. Supported audio/video extensions:
