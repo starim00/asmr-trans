@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-contextBridge.exposeInMainWorld("asmrTrans", {
+const api = {
   selectAudio: () => ipcRenderer.invoke("audio:select"),
   getModelStatus: () => ipcRenderer.invoke("models:status"),
   getHardwareStatus: () => ipcRenderer.invoke("hardware:status"),
@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("asmrTrans", {
   updateSettings: (settings) => ipcRenderer.invoke("settings:update", settings),
   getHistory: () => ipcRenderer.invoke("history:get"),
   upsertHistory: (task) => ipcRenderer.invoke("history:upsert", task),
+  deleteHistory: (id) => ipcRenderer.invoke("history:delete", id),
   retryDependencies: () => ipcRenderer.invoke("deps:retry"),
   installTtsDependencies: () => ipcRenderer.invoke("tts:install-deps"),
   startTranscription: (payload) => ipcRenderer.invoke("transcribe:start", payload),
@@ -78,4 +79,9 @@ contextBridge.exposeInMainWorld("asmrTrans", {
     ipcRenderer.on("deps:progress", listener);
     return () => ipcRenderer.removeListener("deps:progress", listener);
   },
-});
+};
+
+api.getSmokeTasks = () => ipcRenderer.sendSync("smoke:tasks");
+api.failNextHistoryUpsertForSmoke = () => ipcRenderer.sendSync("smoke:fail-next-history-upsert");
+
+contextBridge.exposeInMainWorld("asmrTrans", api);

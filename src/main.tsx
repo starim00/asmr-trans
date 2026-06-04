@@ -3,15 +3,20 @@ import { createRoot } from "react-dom/client";
 import {
   AlertCircle,
   CheckCircle2,
+  Copy,
   Download,
   FileAudio,
   FileVideo,
+  Filter,
   FolderOpen,
+  Hash,
   Loader2,
   Pause,
   Play,
+  Scissors,
   RotateCcw,
   Save,
+  Search,
   Settings,
   SlidersHorizontal,
   Square,
@@ -19,10 +24,32 @@ import {
   Volume2,
   X,
 } from "lucide-react";
+import { buildSrt, buildTxt, formatTimestamp } from "./export-utils";
+import {
+  buildHistoryTask,
+  getHistoryDeleteRequest,
+  historyQueueTaskId,
+  shouldDeleteUpsertResponse,
+  taskIdentity,
+} from "./history-utils";
+import {
+  filterQueueTasks,
+  getClearableTasks,
+  getDoneTasks,
+  getFailedOrCanceledTasks,
+  requeueTaskState,
+  shouldRequeueTask,
+  type QueueTaskStatusFilter,
+} from "./queue-utils";
+import { getReadinessChecks, getTaskNeedsAi, shouldTranslateWithAi, type ReadinessCheck, type ReadinessSeverity } from "./readiness-utils";
+import { filterSegmentItems, getJumpTargetIndex, getVisibleCountForJump, getVisibleSegmentItems, type SegmentFilterMode } from "./segment-list-utils";
+import { mergeEditableSegments, splitEditableSegment } from "./segment-edit-utils";
+import { canRetryTaskTranslation, markTaskTranslationRetryRunning } from "./translation-retry-utils";
 import "./styles.css";
 
 const DEFAULT_WHISPER_MODEL: WhisperModelName = "small";
 const SEGMENT_PAGE_SIZE = 80;
+const ALERT_AUTO_DISMISS_MS = 7000;
 const DEFAULT_AI_SYSTEM_PROMPT =
   "\u4f60\u662f\u4e13\u4e1a\u7684\u65e5\u8bd1\u4e2d\u7ffb\u8bd1\u3002\u8bf7\u628a\u65e5\u8bed ASMR/\u53e3\u8bed\u8f6c\u5199\u7ffb\u8bd1\u6210\u81ea\u7136\u3001\u51c6\u786e\u7684\u7b80\u4f53\u4e2d\u6587\u3002\u5fe0\u5b9e\u4fdd\u7559\u539f\u610f\u3001\u8bed\u6c14\u3001\u79f0\u547c\u548c\u66a7\u6627\u8868\u8fbe\uff1b\u4e0d\u8981\u89e3\u91ca\uff0c\u4e0d\u8981\u603b\u7ed3\uff0c\u4e0d\u8981\u6dfb\u52a0\u539f\u6587\u6ca1\u6709\u7684\u4fe1\u606f\u3002";
 const DEFAULT_AI_USER_PROMPT_TEMPLATE =
@@ -87,6 +114,10 @@ const DEEPSEEK_PRESET: AppSettings = {
     denoise: false,
     retryBadcaseRatioThreshold: 4.0,
   },
+  exportOptions: {
+    txtMode: "bilingual",
+    srtMode: "bilingual",
+  },
 };
 
 const WHISPER_MODELS: Array<{ value: WhisperModelName; label: string; description: string }> = [
@@ -107,6 +138,7 @@ const SETTINGS_SECTIONS = [
   { key: "proxy", label: "代理" },
 ] as const;
 type SettingsSection = (typeof SETTINGS_SECTIONS)[number]["key"];
+type EditSaveState = "idle" | "saving" | "saved" | "failed";
 
 const text = {
   appSubtitle: "\u672c\u5730\u684c\u9762\u6279\u91cf\u8f6c\u5199",
@@ -116,6 +148,12 @@ const text = {
   resumeQueue: "\u6062\u590d",
   cancelTask: "\u53d6\u6d88\u4efb\u52a1",
   removeTask: "\u79fb\u9664\u4efb\u52a1",
+  taskSearch: "搜索任务名或路径",
+  taskFilterAll: "全部",
+  clearDoneTasks: "清除已完成",
+  clearFailedTasks: "清除失败/取消",
+  requeueFailedTasks: "失败重排",
+  noTasksMatched: "没有匹配的任务。",
   settings: "\u8bbe\u7f6e",
   queue: "\u4efb\u52a1\u961f\u5217",
   result: "\u8f6c\u5199\u7ed3\u679c",
@@ -125,6 +163,14 @@ const text = {
   translation: "\u8bd1\u6587",
   saveTxt: "\u4fdd\u5b58\u4e3a txt",
   saveSrt: "\u4fdd\u5b58\u4e3a srt",
+  exportContent: "导出内容",
+  exportTxtMode: "TXT",
+  exportSrtMode: "SRT",
+  exportBilingual: "原文+译文",
+  exportTranslationOnly: "仅译文",
+  exportSourceOnly: "仅原文",
+  currentSetup: "当前配置",
+  currentValue: "当前",
   generateChineseVoice: "\u751f\u6210\u4e2d\u6587\u8bed\u97f3",
   cancelChineseVoice: "\u53d6\u6d88\u8bed\u97f3\u751f\u6210",
   tts: "VoxCPM2 \u4e2d\u6587\u8bed\u97f3",
@@ -232,12 +278,40 @@ const text = {
   installingTtsDependencies: "\u6b63\u5728\u5b89\u88c5/\u4fee\u590d VoxCPM2 \u4f9d\u8d56...",
   unsavedSettings: "有未保存的配置",
   runtimeSettingsSaved: "模型和设备会立即保存",
-  saveSettingsHint: "保存 AI、代理、音频增强和语音生成配置",
+  saveSettingsHint: "保存 AI、代理、音频增强、语音生成和导出配置",
   segmentRemaining: "剩余",
   segmentIndex: "第",
   segmentUnit: "段",
   bilingualSegment: "双语",
   sourceOnlySegment: "单语",
+  readinessReady: "就绪",
+  readinessAiMissing: "需要配置 AI",
+  readinessGpuUnavailable: "GPU 不可用",
+  readinessModelDownload: "首次运行会下载模型",
+  readinessCpuFallback: "自动改用 CPU",
+  readinessAiMessage: "AI API Key 为空，日语任务或未识别语言任务会在翻译阶段失败。",
+  readinessGpuMessage: "已选择 CUDA，但当前 CTranslate2 CUDA 不可用。",
+  readinessModelMessage: "当前 Whisper 模型未下载，首次运行会按需下载。",
+  readinessCpuFallbackMessage: "当前 GPU 不可用，Auto 模式会回落到 CPU。",
+  requeueTask: "重新排队",
+  retryTranslation: "重试翻译",
+  editSaving: "正在自动保存...",
+  editSaved: "已自动保存",
+  editSaveFailed: "保存失败",
+  editSaveFailedMessage: "编辑内容保存失败，请稍后重试。",
+  resultTools: "校对工具",
+  searchSegments: "搜索原文或译文",
+  showAllSegments: "全部",
+  showUntranslated: "未翻译",
+  jumpToSegment: "跳到段落",
+  jump: "跳转",
+  noSegmentsMatched: "没有匹配的分段。",
+  splitSegment: "拆分",
+  mergeNextSegment: "合并下段",
+  copyTimestamp: "复制时间",
+  timestampCopied: "已复制时间：",
+  cannotSplitSegment: "当前分段文本太短，无法拆分。",
+  dismissAlert: "关闭提示",
   models: "\u6a21\u578b\u72b6\u6001",
   firstUseDownload: "\u9996\u6b21\u4f7f\u7528\u4e0b\u8f7d",
   downloaded: "\u5df2\u4e0b\u8f7d",
@@ -268,6 +342,11 @@ const missingDesktopApi = {
   updateSettings: async (settings: AppSettings): Promise<AppSettings> => settings,
   getHistory: async (): Promise<HistoryTask[]> => [],
   upsertHistory: async (task: HistoryTask) => ({ saved: Boolean(task), id: task.id }),
+  deleteHistory: async (request: string | HistoryDeleteRequest) => ({
+    deleted: Boolean(request),
+    id: typeof request === "string" ? request : request.id || request.ids?.[0] || "",
+  }),
+  getSmokeTasks: () => [],
   retryDependencies: async () => ({ ok: false }),
   installTtsDependencies: async () => ({ ok: false }),
   cancelTranscription: async () => ({ canceled: false }),
@@ -310,19 +389,6 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function formatTimestamp(seconds: number) {
-  const safeSeconds = Math.max(seconds, 0);
-  const hours = Math.floor(safeSeconds / 3600);
-  const minutes = Math.floor((safeSeconds % 3600) / 60);
-  const wholeSeconds = Math.floor(safeSeconds % 60);
-  const milliseconds = Math.floor((safeSeconds - Math.floor(safeSeconds)) * 1000);
-  return `${hours.toString().padStart(2, "0")}:${minutes
-    .toString()
-    .padStart(2, "0")}:${wholeSeconds.toString().padStart(2, "0")}.${milliseconds
-    .toString()
-    .padStart(3, "0")}`;
-}
-
 function formatDuration(seconds: number | null | undefined) {
   if (!Number.isFinite(seconds || 0) || !seconds || seconds < 0) {
     return "--";
@@ -337,37 +403,14 @@ function formatDuration(seconds: number | null | undefined) {
   return `${minutes}:${rest.toString().padStart(2, "0")}`;
 }
 
-function formatSrtTimestamp(seconds: number) {
-  return formatTimestamp(seconds).replace(".", ",");
-}
-
-function buildTxt(result: TranscriptionResult | null | undefined) {
-  if (!result) return "";
-  return result.segments
-    .map((segment) => {
-      const timeRange = `[${formatTimestamp(segment.start)} - ${formatTimestamp(segment.end)}]`;
-      if (segment.translatedText !== null && segment.translatedText !== undefined) {
-        return `${timeRange}\n${text.source}\uff1a${segment.sourceText}\n${text.translation}\uff1a${segment.translatedText}`;
-      }
-      return `${timeRange}\n${segment.sourceText}`;
-    })
-    .join("\n\n");
-}
-
-function buildSrt(result: TranscriptionResult | null | undefined) {
-  if (!result) return "";
-  return result.segments
-    .map((segment, index) => {
-      const subtitleText = segment.translatedText !== null && segment.translatedText !== undefined
-        ? `${segment.sourceText}\n${segment.translatedText}`
-        : segment.sourceText;
-      return `${index + 1}\n${formatSrtTimestamp(segment.start)} --> ${formatSrtTimestamp(segment.end)}\n${subtitleText}`;
-    })
-    .join("\n\n");
-}
-
 function exportBaseName(task: QueueTask) {
   return task.file.name.replace(/\.[^.]+$/, "") || "transcription";
+}
+
+function exportModeLabel(mode: ExportContentMode) {
+  if (mode === "translation") return text.exportTranslationOnly;
+  if (mode === "source") return text.exportSourceOnly;
+  return text.exportBilingual;
 }
 
 function hardwareSummary(status: HardwareStatus | null) {
@@ -415,6 +458,10 @@ function mergeSettings(settings?: Partial<AppSettings> | null): AppSettings {
       ...(settings?.whisperAdvanced || {}),
     },
     tts: ttsSettings,
+    exportOptions: {
+      ...DEEPSEEK_PRESET.exportOptions,
+      ...(settings?.exportOptions || {}),
+    },
   };
   merged.translationBackend = "ai";
   return merged;
@@ -439,10 +486,6 @@ function mergeStageTiming(current: Record<string, number> | undefined, progress:
   };
 }
 
-function shouldTranslateWithAi(result: TranscriptionResult) {
-  return result.detectedLanguage.toLowerCase().startsWith("ja");
-}
-
 function hasChineseTranslation(result: TranscriptionResult | null | undefined) {
   return Boolean(result?.segments.some((segment) => typeof segment.translatedText === "string" && segment.translatedText.trim()));
 }
@@ -454,10 +497,6 @@ function resizeTextarea(textarea: HTMLTextAreaElement) {
 
 function taskAddedTime(task: QueueTask | HistoryTask) {
   return new Date(task.addedAt || task.completedAt || 0).getTime() || 0;
-}
-
-function taskIdentity(task: QueueTask) {
-  return task.historyId || task.id;
 }
 
 function MediaIcon({ extension }: { extension: string }) {
@@ -478,7 +517,7 @@ function createTask(file: AudioFile): QueueTask {
 
 function createHistoryQueueTask(task: HistoryTask): QueueTask {
   return {
-    id: `history-${task.id}`,
+    id: historyQueueTaskId(task.id),
     historyId: task.id,
     file: task.file,
     status: "done",
@@ -487,17 +526,6 @@ function createHistoryQueueTask(task: HistoryTask): QueueTask {
     error: null,
     addedAt: task.addedAt || task.completedAt,
     completedAt: task.completedAt,
-  };
-}
-
-function buildHistoryTask(task: QueueTask): HistoryTask | null {
-  if (!task.result) return null;
-  return {
-    id: task.historyId || `${task.file.path}-${task.completedAt || Date.now()}`,
-    file: task.file,
-    result: task.result,
-    addedAt: task.addedAt,
-    completedAt: task.completedAt || new Date().toISOString(),
   };
 }
 
@@ -644,6 +672,12 @@ function App() {
   const [globalProgress, setGlobalProgress] = useState<TranscriptionProgress | null>(null);
   const [ttsTaskId, setTtsTaskId] = useState<string | null>(null);
   const [visibleSegmentCount, setVisibleSegmentCount] = useState(SEGMENT_PAGE_SIZE);
+  const [editSaveStates, setEditSaveStates] = useState<Record<string, EditSaveState>>({});
+  const [segmentSearchQuery, setSegmentSearchQuery] = useState("");
+  const [segmentFilter, setSegmentFilter] = useState<SegmentFilterMode>("all");
+  const [segmentJumpValue, setSegmentJumpValue] = useState("");
+  const [taskSearchQuery, setTaskSearchQuery] = useState("");
+  const [taskStatusFilter, setTaskStatusFilter] = useState<QueueTaskStatusFilter>("all");
 
   const currentTaskIdRef = useRef<string | null>(null);
   const taskResolverRef = useRef<((ok: boolean) => void) | null>(null);
@@ -655,26 +689,39 @@ function App() {
   const whisperModelRef = useRef(whisperModel);
   const computeDeviceRef = useRef(computeDevice);
   const ttsTaskIdRef = useRef<string | null>(null);
+  const removedHistoryIdsRef = useRef<Set<string>>(new Set());
+  const removedHistoryFilePathsRef = useRef<Set<string>>(new Set());
   const resultScrollRef = useRef<HTMLDivElement | null>(null);
+  const segmentCursorRef = useRef<Record<string, number>>({});
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId) || null,
     [selectedTaskId, tasks],
   );
-  const txtContent = useMemo(() => buildTxt(selectedTask?.result), [selectedTask]);
-  const srtContent = useMemo(() => buildSrt(selectedTask?.result), [selectedTask]);
+  const txtContent = useMemo(() => buildTxt(selectedTask?.result, settings.exportOptions.txtMode), [selectedTask, settings.exportOptions.txtMode]);
+  const srtContent = useMemo(() => buildSrt(selectedTask?.result, settings.exportOptions.srtMode), [selectedTask, settings.exportOptions.srtMode]);
   const selectedTaskHasChinese = useMemo(() => hasChineseTranslation(selectedTask?.result), [selectedTask]);
   const selectedSegments = selectedTask?.result?.segments || [];
-  const visibleSegments = useMemo(
-    () => selectedSegments.slice(0, visibleSegmentCount),
-    [selectedSegments, visibleSegmentCount],
+  const filteredSegmentItems = useMemo(
+    () => filterSegmentItems(selectedSegments, segmentFilter, segmentSearchQuery),
+    [selectedSegments, segmentFilter, segmentSearchQuery],
   );
-  const hasMoreSegments = visibleSegments.length < selectedSegments.length;
-  const doneTasks = useMemo(() => tasks.filter((task) => task.status === "done" && task.result), [tasks]);
+  const visibleSegmentItems = useMemo(
+    () => getVisibleSegmentItems(filteredSegmentItems, visibleSegmentCount),
+    [filteredSegmentItems, visibleSegmentCount],
+  );
+  const hasMoreSegments = visibleSegmentItems.length < filteredSegmentItems.length;
+  const doneTasks = useMemo(() => getDoneTasks(tasks), [tasks]);
   const visibleTasks = useMemo(
-    () => (isTaskOrderDescending ? [...tasks].reverse() : tasks),
-    [isTaskOrderDescending, tasks],
+    () => filterQueueTasks({ tasks, query: taskSearchQuery, statusFilter: taskStatusFilter, descending: isTaskOrderDescending }),
+    [isTaskOrderDescending, taskSearchQuery, taskStatusFilter, tasks],
   );
+  const failedOrCanceledTasks = useMemo(() => getFailedOrCanceledTasks(tasks), [tasks]);
+  const readiness = useMemo(
+    () => getReadinessChecks({ tasks, settings, modelStatus, hardwareStatus, computeDevice, text }),
+    [tasks, settings, modelStatus, hardwareStatus, computeDevice],
+  );
+  const selectedEditSaveState = selectedTask ? editSaveStates[selectedTask.id] || "idle" : "idle";
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -696,17 +743,28 @@ function App() {
   }, [tasks]);
 
   useEffect(() => {
+    if (!error) return undefined;
+    const timer = window.setTimeout(() => {
+      setError(null);
+    }, ALERT_AUTO_DISMISS_MS);
+    return () => window.clearTimeout(timer);
+  }, [error]);
+
+  useEffect(() => {
     if (resultScrollRef.current) {
       resultScrollRef.current.scrollTop = 0;
     }
     setVisibleSegmentCount(SEGMENT_PAGE_SIZE);
+    setSegmentSearchQuery("");
+    setSegmentFilter("all");
+    setSegmentJumpValue("");
   }, [selectedTaskId]);
 
   useEffect(() => {
     window.requestAnimationFrame(() => {
       document.querySelectorAll<HTMLTextAreaElement>(".segmentField textarea").forEach(resizeTextarea);
     });
-  }, [selectedTask?.id, visibleSegments.length]);
+  }, [selectedTask?.id, visibleSegmentItems.length]);
 
   useEffect(() => {
     desktopApi.getModelStatus().then(setModelStatus).catch((err) => setError(err instanceof Error ? err.message : String(err)));
@@ -727,6 +785,14 @@ function App() {
         });
       })
       .catch(() => undefined);
+    const smokeTasks = desktopApi.getSmokeTasks?.() || [];
+    if (smokeTasks.length) {
+      setTasks((current) => {
+        const knownIds = new Set(current.map(taskIdentity));
+        const uniqueSmokeTasks = smokeTasks.filter((task) => !knownIds.has(taskIdentity(task)));
+        return [...current, ...uniqueSmokeTasks];
+      });
+    }
     desktopApi
       .getSettings()
       .then((nextSettings) => {
@@ -952,6 +1018,19 @@ function App() {
     desktopApi
       .upsertHistory(historyTask)
       .then((response) => {
+        if (
+          shouldDeleteUpsertResponse(
+            response.id,
+            removedHistoryIdsRef.current,
+            tasksRef.current.some((task) => task.id === taskId),
+            historyTask.file.path,
+            removedHistoryFilePathsRef.current,
+          )
+        ) {
+          removedHistoryIdsRef.current.add(response.id);
+          void desktopApi.deleteHistory({ id: response.id, ids: [response.id], filePath: historyTask.file.path, filePathOnly: true }).catch(() => undefined);
+          return;
+        }
         setTasks((current) =>
           current.map((task) => (task.id === taskId ? { ...task, historyId: response.id, completedAt } : task)),
         );
@@ -1028,6 +1107,11 @@ function App() {
       setError(text.chooseFirst);
       return;
     }
+    const nextReadiness = getReadinessChecks({ tasks, settings, modelStatus, hardwareStatus, computeDevice, text });
+    if (nextReadiness.blocking.length) {
+      setError(nextReadiness.blocking.map((check) => check.message).join(" "));
+      return;
+    }
     setError(null);
     setSavedPath(null);
     setIsQueueRunning(true);
@@ -1095,9 +1179,113 @@ function App() {
     }
     const nextTasks = tasksRef.current.filter((task) => task.id !== taskId);
     setTasks(nextTasks);
+    setEditSaveStates((current) => {
+      const { [taskId]: _removed, ...rest } = current;
+      return rest;
+    });
     if (selectedTaskId === taskId) {
       setSelectedTaskId(nextTasks[0]?.id || null);
     }
+    deleteHistoryForTask(target);
+  }
+
+  function deleteHistoryForTask(task: QueueTask) {
+    const request = getHistoryDeleteRequest(task);
+    if (!request) {
+      return;
+    }
+    request.ids?.forEach((id) => {
+      removedHistoryIdsRef.current.add(id);
+    });
+    if (request.filePath) {
+      removedHistoryFilePathsRef.current.add(request.filePath);
+    }
+    desktopApi.deleteHistory(request).catch((err) => {
+      setError(err instanceof Error ? err.message : String(err));
+    });
+  }
+
+  function clearTasksByStatus(statuses: QueueTaskStatus[]) {
+    const removableTasks = getClearableTasks(tasksRef.current, statuses, ttsTaskIdRef.current);
+    if (!removableTasks.length) {
+      return;
+    }
+    removableTasks.forEach(deleteHistoryForTask);
+    const removableIds = new Set(removableTasks.map((task) => task.id));
+    const nextTasks = tasksRef.current.filter((task) => !removableIds.has(task.id));
+    setTasks(nextTasks);
+    setEditSaveStates((current) => {
+      const nextStates = { ...current };
+      removableIds.forEach((id) => {
+        delete nextStates[id];
+      });
+      return nextStates;
+    });
+    if (selectedTaskId && removableIds.has(selectedTaskId)) {
+      setSelectedTaskId(nextTasks[0]?.id || null);
+    }
+  }
+
+  function requeueFailedTasks() {
+    setError(null);
+    setSavedPath(null);
+    setTasks((current) =>
+      current.map((task) => (shouldRequeueTask(task) ? requeueTaskState(task) : task)),
+    );
+  }
+
+  function requeueTask(taskId: string) {
+    setError(null);
+    setSavedPath(null);
+    setTasks((current) =>
+      current.map((task) => (task.id === taskId ? requeueTaskState(task) : task)),
+    );
+  }
+
+  async function retryTaskTranslation(taskId: string) {
+    const target = tasksRef.current.find((task) => task.id === taskId);
+    if (!canRetryTaskTranslation(target)) {
+      return;
+    }
+    if (!settingsRef.current.aiTranslation.apiKey.trim()) {
+      setError(text.readinessAiMessage);
+      return;
+    }
+    setError(null);
+    setSavedPath(null);
+    setTasks((current) =>
+      current.map((task) => (task.id === taskId ? markTaskTranslationRetryRunning(task) : task)),
+    );
+    await startTaskTranslation(taskId, target.result);
+  }
+
+  function persistEditedTask(task: QueueTask | null) {
+    if (!task) return;
+    const historyTask = buildHistoryTask(task);
+    if (!historyTask) return;
+    setEditSaveStates((current) => ({ ...current, [task.id]: "saving" }));
+    desktopApi
+      .upsertHistory(historyTask)
+      .then((response) => {
+        if (
+          shouldDeleteUpsertResponse(
+            response.id,
+            removedHistoryIdsRef.current,
+            tasksRef.current.some((currentTask) => currentTask.id === task.id),
+            historyTask.file.path,
+            removedHistoryFilePathsRef.current,
+          )
+        ) {
+          removedHistoryIdsRef.current.add(response.id);
+          void desktopApi.deleteHistory({ id: response.id, ids: [response.id], filePath: historyTask.file.path, filePathOnly: true }).catch(() => undefined);
+          return;
+        }
+        setEditSaveStates((current) => ({ ...current, [task.id]: "saved" }));
+      })
+      .catch(() => {
+        setEditSaveStates((current) => ({ ...current, [task.id]: "failed" }));
+        setError(text.editSaveFailedMessage);
+      });
   }
 
   function updateSegmentText(taskId: string, segmentIndex: number, field: "sourceText" | "translatedText", value: string) {
@@ -1122,11 +1310,7 @@ function App() {
     );
 
     window.setTimeout(() => {
-      const task = updatedTask;
-      if (!task) return;
-      const historyTask = buildHistoryTask(task);
-      if (!historyTask) return;
-      desktopApi.upsertHistory(historyTask).catch(() => undefined);
+      persistEditedTask(updatedTask);
     }, 0);
   }
 
@@ -1138,6 +1322,116 @@ function App() {
   ) {
     resizeTextarea(event.currentTarget);
     updateSegmentText(taskId, segmentIndex, field, event.currentTarget.value);
+  }
+
+  function rememberSegmentCursor(taskId: string, segmentIndex: number, field: "sourceText" | "translatedText", textarea: HTMLTextAreaElement) {
+    segmentCursorRef.current[`${taskId}:${segmentIndex}:${field}`] = textarea.selectionStart;
+  }
+
+  function splitSegment(taskId: string, segmentIndex: number) {
+    let updatedTask: QueueTask | null = null;
+    let didSplit = false;
+    setTasks((current) =>
+      current.map((task) => {
+        if (task.id !== taskId || !task.result) {
+          return task;
+        }
+        const target = task.result.segments[segmentIndex];
+        if (!target) {
+          return task;
+        }
+        const sourceCursor = segmentCursorRef.current[`${taskId}:${segmentIndex}:sourceText`];
+        const translationCursor = segmentCursorRef.current[`${taskId}:${segmentIndex}:translatedText`];
+        const splitSegments = splitEditableSegment(target, { sourceCursor, translationCursor });
+        if (!splitSegments) {
+          return task;
+        }
+        const [firstSegment, secondSegment] = splitSegments;
+        const nextSegments = [
+          ...task.result.segments.slice(0, segmentIndex),
+          firstSegment,
+          secondSegment,
+          ...task.result.segments.slice(segmentIndex + 1),
+        ];
+        updatedTask = {
+          ...task,
+          result: {
+            ...task.result,
+            segments: nextSegments,
+          },
+        };
+        didSplit = true;
+        return updatedTask;
+      }),
+    );
+    if (!didSplit) {
+      setError(text.cannotSplitSegment);
+      return;
+    }
+    setVisibleSegmentCount((current) => Math.max(current + 1, segmentIndex + 2));
+    window.setTimeout(() => persistEditedTask(updatedTask), 0);
+  }
+
+  function mergeSegmentWithNext(taskId: string, segmentIndex: number) {
+    let updatedTask: QueueTask | null = null;
+    setTasks((current) =>
+      current.map((task) => {
+        if (task.id !== taskId || !task.result) {
+          return task;
+        }
+        const currentSegment = task.result.segments[segmentIndex];
+        const nextSegment = task.result.segments[segmentIndex + 1];
+        if (!currentSegment || !nextSegment) {
+          return task;
+        }
+        const mergedSegment = mergeEditableSegments(currentSegment, nextSegment);
+        const nextSegments = [
+          ...task.result.segments.slice(0, segmentIndex),
+          mergedSegment,
+          ...task.result.segments.slice(segmentIndex + 2),
+        ];
+        updatedTask = {
+          ...task,
+          result: {
+            ...task.result,
+            segments: nextSegments,
+          },
+        };
+        return updatedTask;
+      }),
+    );
+    setVisibleSegmentCount((current) => Math.max(SEGMENT_PAGE_SIZE, Math.min(current, selectedSegments.length - 1)));
+    window.setTimeout(() => persistEditedTask(updatedTask), 0);
+  }
+
+  async function copySegmentTimestamp(segment: TranscriptionSegment) {
+    const value = `${formatTimestamp(segment.start)} - ${formatTimestamp(segment.end)}`;
+    try {
+      await navigator.clipboard.writeText(value);
+      setSavedPath(`${text.timestampCopied}${value}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function jumpToSegment() {
+    if (!selectedSegments.length) {
+      return;
+    }
+    const targetIndex = getJumpTargetIndex(selectedSegments.length, segmentJumpValue);
+    if (targetIndex === null) {
+      return;
+    }
+    setSegmentSearchQuery("");
+    setSegmentFilter("all");
+    setVisibleSegmentCount((current) => getVisibleCountForJump(current, targetIndex, SEGMENT_PAGE_SIZE));
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const target = document.querySelector<HTMLElement>(`[data-segment-index="${targetIndex}"]`);
+        target?.scrollIntoView({ block: "start", behavior: "smooth" });
+        target?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+      });
+    });
   }
 
   function updateAiTranslation(patch: Partial<AiTranslationConfig>) {
@@ -1193,6 +1487,18 @@ function App() {
       ...current,
       tts: {
         ...current.tts,
+        ...patch,
+      },
+    }));
+    setSettingsSaved(false);
+    setSettingsDirty(true);
+  }
+
+  function updateExportOptions(patch: Partial<ExportSettings>) {
+    setSettings((current) => ({
+      ...current,
+      exportOptions: {
+        ...current.exportOptions,
         ...patch,
       },
     }));
@@ -1270,6 +1576,7 @@ function App() {
       audioEnhancement: current.audioEnhancement,
       whisperAdvanced: current.whisperAdvanced,
       tts: current.tts,
+      exportOptions: current.exportOptions,
     }));
     setSettingsSaved(false);
     setSettingsDirty(true);
@@ -1368,7 +1675,10 @@ function App() {
   async function exportAll(format: "txt" | "srt") {
     const items = doneTasks
       .map((task) => {
-        const content = format === "txt" ? buildTxt(task.result) : buildSrt(task.result);
+        const content =
+          format === "txt"
+            ? buildTxt(task.result, settings.exportOptions.txtMode)
+            : buildSrt(task.result, settings.exportOptions.srtMode);
         return {
           content,
           fileName: `${exportBaseName(task)}.${format}`,
@@ -1391,9 +1701,9 @@ function App() {
     }
   }
 
-  const queueSummary = `${whisperModel} / ${computeDevice.toUpperCase()} / AI / ${
+  const queueSummary = `${whisperModel} / ${computeDevice.toUpperCase()} / ${
     settings.aiTranslation.apiKey ? text.aiConfigured : text.aiNotConfigured
-  }`;
+  } / ${settings.audioEnhancement.enabled ? text.audioEnhancement : "\u672a\u542f\u7528\u97f3\u9891\u589e\u5f3a"}`;
 
   return (
     <main className="shell">
@@ -1402,6 +1712,24 @@ function App() {
           <p className="eyebrow">{text.appSubtitle}</p>
           <h1>ASMR Trans</h1>
           <p className="toolbarSummary">{queueSummary}</p>
+        </div>
+        <div className="statusArea">
+          {globalProgress ? (
+            <div className="globalProgress">
+              <div className="progressTrack">
+                <div className="progressFill" style={{ width: `${globalProgress.percent ?? 0}%` }} />
+              </div>
+              <span>{globalProgress.message}</span>
+            </div>
+          ) : (
+            <div className="readinessChips" title={readiness.summary.message}>
+              {readiness.checks.map((check) => (
+                <span key={check.key} className={`readinessChip ${check.severity}`}>
+                  {check.label}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <div className="commandArea">
           <div className="toolbarActions primaryActions">
@@ -1425,29 +1753,11 @@ function App() {
               <Square size={16} />
               {text.cancelTask}
             </button>
-          </div>
-          <div className="toolbarActions secondaryActions">
-            <button className="secondaryButton" onClick={() => void exportAll("txt")} disabled={!doneTasks.length}>
-              <Save size={18} />
-              {text.exportAllTxt}
-            </button>
-            <button className="secondaryButton" onClick={() => void exportAll("srt")} disabled={!doneTasks.length}>
-              <Download size={18} />
-              {text.exportAllSrt}
-            </button>
             <button className="secondaryButton iconButton" onClick={() => setIsSettingsOpen(true)} disabled={isQueueRunning}>
               <Settings size={18} />
               {text.settings}
             </button>
           </div>
-          {globalProgress && (
-            <div className="globalProgress">
-              <div className="progressTrack">
-                <div className="progressFill" style={{ width: `${globalProgress.percent ?? 0}%` }} />
-              </div>
-              <span>{globalProgress.message}</span>
-            </div>
-          )}
         </div>
       </section>
 
@@ -1462,8 +1772,40 @@ function App() {
               <span>{tasks.length}</span>
             </div>
           </div>
+          <div className="taskTools">
+            <label className="toolSearch taskSearch">
+              <Search size={15} />
+              <input value={taskSearchQuery} onChange={(event) => setTaskSearchQuery(event.target.value)} placeholder={text.taskSearch} />
+            </label>
+            <div className="taskFilterRow">
+              {(["all", "queued", "running", "done", "failed", "canceled"] as QueueTaskStatusFilter[]).map((status) => (
+                <button
+                  key={status}
+                  className={taskStatusFilter === status ? "active" : ""}
+                  onClick={() => setTaskStatusFilter(status)}
+                >
+                  {status === "all" ? text.taskFilterAll : statusLabel(status)}
+                </button>
+              ))}
+            </div>
+            <div className="taskBulkActions">
+              <button className="miniActionButton" onClick={() => clearTasksByStatus(["done"])} disabled={!doneTasks.length}>
+                <Trash2 size={13} />
+                {text.clearDoneTasks}
+              </button>
+              <button className="miniActionButton" onClick={() => clearTasksByStatus(["failed", "canceled"])} disabled={!failedOrCanceledTasks.length}>
+                <Trash2 size={13} />
+                {text.clearFailedTasks}
+              </button>
+              <button className="miniActionButton" onClick={requeueFailedTasks} disabled={!failedOrCanceledTasks.length || isQueueRunning}>
+                <RotateCcw size={13} />
+                {text.requeueFailedTasks}
+              </button>
+            </div>
+          </div>
           <div className="taskList">
             {!tasks.length && <div className="emptyState compactEmpty">{text.emptyQueue}</div>}
+            {Boolean(tasks.length) && !visibleTasks.length && <div className="emptyState compactEmpty">{text.noTasksMatched}</div>}
             {visibleTasks.map((task) => (
               <div
                 key={task.id}
@@ -1486,6 +1828,32 @@ function App() {
                   </span>
                   {task.completedAt && <span>{`${text.historyLoaded} - ${new Date(task.completedAt).toLocaleString()}`}</span>}
                   {task.error && <em>{task.error}</em>}
+                  {(task.status === "failed" || task.status === "canceled") && (
+                    <div className="taskInlineActions">
+                      <button
+                        className="miniActionButton"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          requeueTask(task.id);
+                        }}
+                      >
+                        <RotateCcw size={13} />
+                        {text.requeueTask}
+                      </button>
+                      {canRetryTaskTranslation(task) && (
+                        <button
+                          className="miniActionButton"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void retryTaskTranslation(task.id);
+                          }}
+                        >
+                          <RotateCcw size={13} />
+                          {text.retryTranslation}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className={`taskStatus ${task.status}`}>
                   {task.status === "running" && <Loader2 className="spin" size={14} />}
@@ -1523,9 +1891,42 @@ function App() {
               {selectedTask?.result && selectedTask.progress?.message && (
                 <p className="progressMessage">{selectedTask.progress.message}</p>
               )}
+              {selectedEditSaveState !== "idle" && (
+                <p className={`editSaveStatus ${selectedEditSaveState}`}>
+                  {selectedEditSaveState === "saving" && text.editSaving}
+                  {selectedEditSaveState === "saved" && text.editSaved}
+                  {selectedEditSaveState === "failed" && text.editSaveFailed}
+                </p>
+              )}
               {selectedTask && <ProgressMetrics task={selectedTask} />}
             </div>
             <div className="exportActions">
+              <div className="exportModeControls" aria-label={text.exportContent}>
+                <label>
+                  <span>{text.exportTxtMode}</span>
+                  <select
+                    value={settings.exportOptions.txtMode}
+                    onChange={(event) => updateExportOptions({ txtMode: event.target.value as ExportContentMode })}
+                    disabled={isQueueRunning}
+                  >
+                    <option value="bilingual">{text.exportBilingual}</option>
+                    <option value="translation">{text.exportTranslationOnly}</option>
+                    <option value="source">{text.exportSourceOnly}</option>
+                  </select>
+                </label>
+                <label>
+                  <span>{text.exportSrtMode}</span>
+                  <select
+                    value={settings.exportOptions.srtMode}
+                    onChange={(event) => updateExportOptions({ srtMode: event.target.value as ExportContentMode })}
+                    disabled={isQueueRunning}
+                  >
+                    <option value="bilingual">{text.exportBilingual}</option>
+                    <option value="translation">{text.exportTranslationOnly}</option>
+                    <option value="source">{text.exportSourceOnly}</option>
+                  </select>
+                </label>
+              </div>
               <button className="secondaryButton" onClick={saveSelectedTxt} disabled={selectedTask?.status !== "done" || !selectedTask?.result}>
                 <Save size={18} />
                 {text.saveTxt}
@@ -1555,26 +1956,120 @@ function App() {
                   {text.generateChineseVoice}
                 </button>
               )}
+              <button className="secondaryButton" onClick={() => void exportAll("txt")} disabled={!doneTasks.length}>
+                <Save size={18} />
+                {text.exportAllTxt}
+              </button>
+              <button className="secondaryButton" onClick={() => void exportAll("srt")} disabled={!doneTasks.length}>
+                <Download size={18} />
+                {text.exportAllSrt}
+              </button>
             </div>
           </div>
 
           <div className="segments" ref={resultScrollRef}>
             {!selectedTask?.result && <div className="emptyState">{selectedTask?.error || text.emptyResult}</div>}
-            {selectedTask?.result && selectedSegments.length > visibleSegments.length && (
-              <div className="segmentWindowNotice">
-                {text.showingSegments}: {visibleSegments.length} / {selectedSegments.length}
+            {selectedTask?.result && (
+              <div className="resultTools" aria-label={text.resultTools}>
+                <label className="toolSearch">
+                  <Search size={15} />
+                  <input
+                    value={segmentSearchQuery}
+                    onChange={(event) => {
+                      setSegmentSearchQuery(event.target.value);
+                      setVisibleSegmentCount(SEGMENT_PAGE_SIZE);
+                    }}
+                    placeholder={text.searchSegments}
+                  />
+                </label>
+                <div className="toolSegmented" aria-label={text.resultTools}>
+                  <button
+                    className={segmentFilter === "all" ? "active" : ""}
+                    onClick={() => {
+                      setSegmentFilter("all");
+                      setVisibleSegmentCount(SEGMENT_PAGE_SIZE);
+                    }}
+                  >
+                    <Filter size={14} />
+                    {text.showAllSegments}
+                  </button>
+                  <button
+                    className={segmentFilter === "untranslated" ? "active" : ""}
+                    onClick={() => {
+                      setSegmentFilter("untranslated");
+                      setVisibleSegmentCount(SEGMENT_PAGE_SIZE);
+                    }}
+                  >
+                    <Filter size={14} />
+                    {text.showUntranslated}
+                  </button>
+                </div>
+                <label className="jumpField">
+                  <Hash size={15} />
+                  <input
+                    value={segmentJumpValue}
+                    onChange={(event) => setSegmentJumpValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        jumpToSegment();
+                      }
+                    }}
+                    inputMode="numeric"
+                    placeholder={text.jumpToSegment}
+                  />
+                  <button className="secondaryButton compactButton" onClick={jumpToSegment}>
+                    {text.jump}
+                  </button>
+                </label>
               </div>
             )}
-            {selectedTask && visibleSegments.map((segment, index) => {
+            {selectedTask?.result && filteredSegmentItems.length > visibleSegmentItems.length && (
+              <div className="segmentWindowNotice">
+                {text.showingSegments}: {visibleSegmentItems.length} / {filteredSegmentItems.length}
+              </div>
+            )}
+            {selectedTask?.result && !filteredSegmentItems.length && <div className="emptyState compactEmpty">{text.noSegmentsMatched}</div>}
+            {selectedTask && visibleSegmentItems.map(({ segment, index }) => {
               const isBilingual = segment.translatedText !== null && segment.translatedText !== undefined;
               return (
-                <article className={`segment ${isBilingual ? "bilingualSegment" : "sourceOnlySegment"}`} key={`${segment.start}-${segment.end}-${index}`}>
+                <article
+                  className={`segment ${isBilingual ? "bilingualSegment" : "sourceOnlySegment"}`}
+                  key={`${segment.start}-${segment.end}-${index}`}
+                  data-segment-index={index}
+                >
                   <div className="segmentMeta">
                     <time>
                       {formatTimestamp(segment.start)} - {formatTimestamp(segment.end)}
                     </time>
                     <span>{`${text.segmentIndex} ${index + 1} ${text.segmentUnit}`}</span>
                     <span>{isBilingual ? text.bilingualSegment : text.sourceOnlySegment}</span>
+                    <div className="segmentActions">
+                      <button
+                        className="miniActionButton"
+                        onClick={() => void copySegmentTimestamp(segment)}
+                        title={text.copyTimestamp}
+                      >
+                        <Copy size={13} />
+                        {text.copyTimestamp}
+                      </button>
+                      <button
+                        className="miniActionButton"
+                        onClick={() => splitSegment(selectedTask.id, index)}
+                        title={text.splitSegment}
+                      >
+                        <Scissors size={13} />
+                        {text.splitSegment}
+                      </button>
+                      <button
+                        className="miniActionButton"
+                        onClick={() => mergeSegmentWithNext(selectedTask.id, index)}
+                        disabled={index >= selectedSegments.length - 1}
+                        title={text.mergeNextSegment}
+                      >
+                        <RotateCcw size={13} />
+                        {text.mergeNextSegment}
+                      </button>
+                    </div>
                   </div>
                   <div className="segmentContent">
                     {isBilingual ? (
@@ -1584,6 +2079,9 @@ function App() {
                           <textarea
                             value={segment.sourceText}
                             onChange={(event) => handleSegmentTextChange(event, selectedTask.id, index, "sourceText")}
+                            onClick={(event) => rememberSegmentCursor(selectedTask.id, index, "sourceText", event.currentTarget)}
+                            onKeyUp={(event) => rememberSegmentCursor(selectedTask.id, index, "sourceText", event.currentTarget)}
+                            onSelect={(event) => rememberSegmentCursor(selectedTask.id, index, "sourceText", event.currentTarget)}
                             rows={1}
                           />
                         </label>
@@ -1592,6 +2090,9 @@ function App() {
                           <textarea
                             value={segment.translatedText ?? ""}
                             onChange={(event) => handleSegmentTextChange(event, selectedTask.id, index, "translatedText")}
+                            onClick={(event) => rememberSegmentCursor(selectedTask.id, index, "translatedText", event.currentTarget)}
+                            onKeyUp={(event) => rememberSegmentCursor(selectedTask.id, index, "translatedText", event.currentTarget)}
+                            onSelect={(event) => rememberSegmentCursor(selectedTask.id, index, "translatedText", event.currentTarget)}
                             rows={1}
                           />
                         </label>
@@ -1602,6 +2103,9 @@ function App() {
                         <textarea
                           value={segment.sourceText}
                           onChange={(event) => handleSegmentTextChange(event, selectedTask.id, index, "sourceText")}
+                          onClick={(event) => rememberSegmentCursor(selectedTask.id, index, "sourceText", event.currentTarget)}
+                          onKeyUp={(event) => rememberSegmentCursor(selectedTask.id, index, "sourceText", event.currentTarget)}
+                          onSelect={(event) => rememberSegmentCursor(selectedTask.id, index, "sourceText", event.currentTarget)}
                           rows={1}
                         />
                       </label>
@@ -1615,7 +2119,7 @@ function App() {
                 className="secondaryButton loadMoreButton"
                 onClick={() => setVisibleSegmentCount((current) => current + SEGMENT_PAGE_SIZE)}
               >
-                {text.loadMoreSegments} ({visibleSegments.length} / {selectedSegments.length}，{text.segmentRemaining} {selectedSegments.length - visibleSegments.length})
+                {text.loadMoreSegments} ({visibleSegmentItems.length} / {filteredSegmentItems.length}，{text.segmentRemaining} {filteredSegmentItems.length - visibleSegmentItems.length})
               </button>
             )}
           </div>
@@ -1626,6 +2130,9 @@ function App() {
         <div className="floatingAlert alert">
           <AlertCircle size={18} />
           <span>{error}</span>
+          <button className="alertCloseButton" type="button" onClick={() => setError(null)} aria-label={text.dismissAlert} title={text.dismissAlert}>
+            <X size={14} />
+          </button>
         </div>
       )}
       {savedPath && (
@@ -1754,6 +2261,30 @@ function SettingsDrawer({
       </div>
 
       <div className="drawerBody">
+        <div className="statusBlock settingsSummaryBlock">
+          <div className="blockTitleRow">
+            <h3>{text.currentSetup}</h3>
+            <SlidersHorizontal size={16} />
+          </div>
+          <div className="summaryGrid">
+            <StatusRow label={`Whisper ${whisperModel}`} ready={Boolean(modelStatus?.whisperDownloaded)} />
+            <StatusRow
+              label={computeDevice === "auto" ? text.auto : computeDevice.toUpperCase()}
+              ready={computeDevice !== "cuda" || Boolean(hardwareStatus?.ctranslate2CudaAvailable)}
+              readyText={text.currentValue}
+            />
+            <StatusRow
+              label={settings.aiTranslation.model || "AI"}
+              ready={Boolean(settings.aiTranslation.apiKey)}
+              readyText={text.aiConfigured}
+              notReadyText={text.aiNotConfigured}
+            />
+            <StatusRow label={text.audioEnhancement} ready={settings.audioEnhancement.enabled} readyText={text.enableAudioEnhancement} notReadyText="关闭" />
+            <StatusRow label={`${text.exportTxtMode}: ${exportModeLabel(settings.exportOptions.txtMode)}`} ready readyText={text.currentValue} />
+            <StatusRow label={`${text.exportSrtMode}: ${exportModeLabel(settings.exportOptions.srtMode)}`} ready readyText={text.currentValue} />
+          </div>
+        </div>
+
         {activeSection === "recognition" && (
           <>
             <div className="statusBlock">

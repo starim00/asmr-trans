@@ -95,9 +95,9 @@ h3 {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 310px) minmax(260px, 1fr) auto;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
   margin-bottom: 12px;
   padding: 12px 14px;
   background: rgba(248, 250, 252, 0.96);
@@ -143,6 +143,50 @@ h3 {
   line-height: 1.35;
 }
 
+.statusArea {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.readinessChips {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.readinessChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.readinessChip.ok {
+  color: var(--success);
+  background: var(--success-soft);
+  border-color: rgba(31, 107, 79, 0.18);
+}
+
+.readinessChip.warning {
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-color: rgba(135, 96, 25, 0.18);
+}
+
+.readinessChip.blocking {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: rgba(143, 45, 54, 0.2);
+}
+
 .progressTrack {
   height: 7px;
   overflow: hidden;
@@ -171,14 +215,11 @@ h3 {
 
 .commandArea {
   min-width: 0;
-  display: grid;
-  gap: 8px;
-  justify-items: end;
+  display: flex;
+  justify-content: flex-end;
 }
 
-.primaryActions,
-.secondaryActions {
-  width: 100%;
+.primaryActions {
   justify-content: flex-end;
 }
 
@@ -261,11 +302,18 @@ h3 {
 .resultPanel {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: 0 10px 24px rgba(21, 30, 45, 0.06);
+}
+
+.taskPanel {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.resultPanel {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .panelHeader,
@@ -296,6 +344,39 @@ h3 {
   background: var(--surface-muted);
 }
 
+.exportModeControls {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.exportModeControls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 0 7px;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.exportModeControls select {
+  min-height: 26px;
+  max-width: 104px;
+  color: var(--text);
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+}
+
 .progressMetrics {
   display: flex;
   flex-wrap: wrap;
@@ -314,6 +395,24 @@ h3 {
   border-radius: 999px;
   font-size: 12px;
   font-weight: 800;
+}
+
+.editSaveStatus {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.editSaveStatus.saving {
+  color: var(--text-muted);
+}
+
+.editSaveStatus.saved {
+  color: var(--success);
+}
+
+.editSaveStatus.failed {
+  color: var(--danger);
 }
 
 .panelHeaderActions {
@@ -344,6 +443,45 @@ h3 {
   cursor: pointer;
   font-size: 12px;
   font-weight: 900;
+}
+
+.taskTools {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.taskSearch {
+  width: 100%;
+}
+
+.taskFilterRow,
+.taskBulkActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.taskFilterRow button {
+  min-height: 28px;
+  padding: 0 9px;
+  color: var(--text-muted);
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.taskFilterRow button.active {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .taskList,
@@ -431,6 +569,41 @@ h3 {
   font-size: 12px;
   font-style: normal;
   line-height: 1.35;
+}
+
+.taskInlineActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.miniActionButton {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid rgba(51, 75, 114, 0.18);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.miniActionButton:hover {
+  border-color: rgba(51, 75, 114, 0.34);
+  background: #dfe8f5;
+}
+
+.miniActionButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
 }
 
 .taskStatus {
@@ -522,6 +695,14 @@ h3 {
   gap: 8px;
 }
 
+.segmentActions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .segmentMeta time,
 .segmentMeta span {
   display: inline-flex;
@@ -558,6 +739,82 @@ h3 {
   border-radius: 8px;
   font-size: 13px;
   font-weight: 800;
+}
+
+.resultTools {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 240px);
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.toolSearch,
+.jumpField {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-muted);
+  background: #fbfcfe;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 9px;
+}
+
+.toolSearch input,
+.jumpField input {
+  min-width: 0;
+  width: 100%;
+  min-height: 34px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.jumpField {
+  padding-right: 4px;
+}
+
+.jumpField .compactButton {
+  min-height: 28px;
+  padding: 0 9px;
+}
+
+.toolSegmented {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(76px, 1fr));
+  gap: 4px;
+  padding: 4px;
+  background: #e4e9f1;
+  border-radius: 8px;
+}
+
+.toolSegmented button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  color: var(--text-muted);
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.toolSegmented button.active {
+  color: #ffffff;
+  background: var(--accent);
 }
 
 .loadMoreButton {
@@ -713,6 +970,16 @@ h3 {
   background: var(--surface-strong);
 }
 
+.settingsSummaryBlock {
+  background: #fbfcfe;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .subBlock {
   display: grid;
   gap: 10px;
@@ -866,7 +1133,7 @@ h3 {
   z-index: 30;
   max-width: min(720px, calc(100vw - 48px));
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 20px minmax(0, 1fr) 24px;
   gap: 8px;
   align-items: start;
   padding: 12px;
@@ -874,6 +1141,23 @@ h3 {
   font-size: 13px;
   line-height: 1.45;
   box-shadow: 0 10px 30px rgba(21, 30, 45, 0.16);
+}
+
+.alertCloseButton {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.alertCloseButton:hover {
+  background: rgba(255, 255, 255, 0.55);
 }
 
 .alert {
@@ -911,12 +1195,11 @@ h3 {
   }
 
   .commandArea {
-    justify-items: stretch;
+    justify-content: flex-start;
   }
 
   .toolbarActions,
-  .primaryActions,
-  .secondaryActions {
+  .primaryActions {
     justify-content: flex-start;
   }
 }
@@ -936,7 +1219,9 @@ h3 {
   }
 
   .bilingualSegment .segmentContent,
+  .resultTools,
   .fieldGrid,
+  .summaryGrid,
   .presetGrid {
     grid-template-columns: 1fr;
   }

@@ -1,7 +1,26 @@
-const { app, BrowserWindow, dialog, ipcMain, screen } = require("electron");
+﻿const { app, BrowserWindow, dialog, ipcMain, screen } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { spawn, spawnSync } = require("node:child_process");
+const {
+  readHistory: readHistoryFile,
+  upsertHistoryTask: upsertHistoryFileTask,
+  deleteHistoryTask: deleteHistoryFileTask,
+} = require("./history-store.cjs");
+const {
+  DEFAULT_WINDOW_STATE,
+  readSettings: readSettingsFile,
+  writeSettings: writeSettingsFile,
+} = require("./settings-store.cjs");
+const {
+  getExportableItems,
+  getUniqueExportFileName,
+  safeExportFileName,
+} = require("./export-store.cjs");
+
+if (process.env.ASMR_TRANS_USER_DATA_DIR) {
+  app.setPath("userData", process.env.ASMR_TRANS_USER_DATA_DIR);
+}
 
 const MEDIA_EXTENSIONS = ["mp3", "wav", "m4a", "flac", "ogg", "aac", "mp4", "mkv", "mov", "webm", "avi", "wmv"];
 let mainWindow = null;
@@ -13,80 +32,9 @@ const activeTranslationWorkers = new Map();
 let dependencyInstallPromise = null;
 let ttsDependencyInstallPromise = null;
 let windowStateSaveTimer = null;
-
-const DEFAULT_WINDOW_STATE = {
-  width: 1120,
-  height: 780,
-  isMaximized: false,
-};
-
-const DEFAULT_AI_SYSTEM_PROMPT =
-  "\u4f60\u662f\u4e13\u4e1a\u7684\u65e5\u8bd1\u4e2d\u7ffb\u8bd1\u3002\u8bf7\u628a\u65e5\u8bed ASMR/\u53e3\u8bed\u8f6c\u5199\u7ffb\u8bd1\u6210\u81ea\u7136\u3001\u51c6\u786e\u7684\u7b80\u4f53\u4e2d\u6587\u3002\u5fe0\u5b9e\u4fdd\u7559\u539f\u610f\u3001\u8bed\u6c14\u3001\u79f0\u547c\u548c\u66a7\u6627\u8868\u8fbe\uff1b\u4e0d\u8981\u89e3\u91ca\uff0c\u4e0d\u8981\u603b\u7ed3\uff0c\u4e0d\u8981\u6dfb\u52a0\u539f\u6587\u6ca1\u6709\u7684\u4fe1\u606f\u3002";
-const DEFAULT_AI_USER_PROMPT_TEMPLATE =
-  "\u8bf7\u7ffb\u8bd1\u4e0b\u9762 JSON \u6570\u7ec4\u4e2d\u7684 items\u3002\u6bcf\u9879\u5305\u542b id\u3001start\u3001end\u3001text\u3001contextBefore\u3001contextAfter\u3002context \u5b57\u6bb5\u53ea\u7528\u4e8e\u7406\u89e3\u4e0a\u4e0b\u6587\uff0c\u53ea\u7ffb\u8bd1 text\u3002\u53ea\u8fd4\u56de JSON \u6570\u7ec4\uff0c\u6570\u7ec4\u6bcf\u9879\u5fc5\u987b\u662f {\"id\": \u6570\u5b57, \"translation\": \"\u4e2d\u6587\u8bd1\u6587\"}\uff0c\u4e0d\u8981\u8fd4\u56de Markdown\u3002";
-
-const DEFAULT_SETTINGS = {
-  whisperModel: "small",
-  computeDevice: "auto",
-  translationBackend: "ai",
-  aiTranslation: {
-    baseUrl: "https://api.deepseek.com",
-    apiKey: "",
-    model: "deepseek-v4-pro",
-    temperature: 0.2,
-    topP: 0.9,
-    topK: "",
-    maxTokens: 4096,
-    timeoutSeconds: 120,
-    retries: 2,
-    reasoningEffort: "high",
-    thinking: true,
-    systemPrompt: DEFAULT_AI_SYSTEM_PROMPT,
-    userPromptTemplate: DEFAULT_AI_USER_PROMPT_TEMPLATE,
-    contextWindow: 6,
-    contextOverlap: 1,
-    proxyEnabled: false,
-    proxyType: "http",
-    proxyHost: "127.0.0.1",
-    proxyPort: "7890",
-  },
-  network: {
-    proxyEnabled: false,
-    proxyType: "http",
-    proxyHost: "127.0.0.1",
-    proxyPort: "7890",
-  },
-  audioEnhancement: {
-    enabled: false,
-    normalize: true,
-    compression: true,
-    denoise: false,
-    mono: true,
-    targetPeak: 0.9,
-    noiseGateDb: -48,
-  },
-  whisperAdvanced: {
-    profile: "balanced",
-    beamSize: 5,
-    vadFilter: true,
-    noSpeechThreshold: 0.6,
-    conditionOnPreviousText: false,
-    initialPrompt: "",
-  },
-  tts: {
-    enabled: false,
-    device: "auto",
-    voicePrompt: "\u4e2d\u6587\uff0c\u8f7b\u58f0\uff0c\u6e29\u67d4\uff0c\u8bed\u901f\u63a5\u8fd1\u539f\u97f3\u9891\uff0c\u505c\u987f\u81ea\u7136\uff0c\u8d34\u8fd1\u539f\u97f3\u8272",
-    cfgValue: 1.6,
-    inferenceTimesteps: 20,
-    normalize: true,
-    denoise: false,
-    retryBadcaseRatioThreshold: 4.0,
-  },
-  windowState: DEFAULT_WINDOW_STATE,
-};
-
-const LEGACY_TTS_VOICE_PROMPT = "\u4e2d\u6587\uff0c\u8f7b\u58f0\uff0c\u6e29\u67d4\uff0c\u81ea\u7136\uff0c\u8d34\u8fd1\u539f\u97f3\u8272";
+let failNextHistoryUpsertForSmoke = false;
+let smokeTranscriptionRunning = false;
+const smokeTranscriptionStartsByPath = new Map();
 
 function getModelsDir() {
   return path.join(app.getPath("userData"), "models");
@@ -100,69 +48,48 @@ function getHistoryPath() {
   return path.join(app.getPath("userData"), "history.json");
 }
 
-function mergeSettings(settings = {}) {
-  const ttsSettings = {
-    ...DEFAULT_SETTINGS.tts,
-    ...(settings.tts || {}),
-  };
-  if (
-    settings.tts &&
-    settings.tts.voicePrompt === LEGACY_TTS_VOICE_PROMPT &&
-    Number(settings.tts.cfgValue) === 2 &&
-    Number(settings.tts.inferenceTimesteps) === 10
-  ) {
-    ttsSettings.voicePrompt = DEFAULT_SETTINGS.tts.voicePrompt;
-    ttsSettings.cfgValue = DEFAULT_SETTINGS.tts.cfgValue;
-    ttsSettings.inferenceTimesteps = DEFAULT_SETTINGS.tts.inferenceTimesteps;
-    ttsSettings.retryBadcaseRatioThreshold = DEFAULT_SETTINGS.tts.retryBadcaseRatioThreshold;
-    ttsSettings.denoise = DEFAULT_SETTINGS.tts.denoise;
+function getSmokeExportDir() {
+  return path.join(app.getPath("userData"), "smoke-exports");
+}
+
+function getSmokeSelectedMediaPath() {
+  const mediaPath = path.join(app.getPath("userData"), "smoke-selected.wav");
+  if (!fs.existsSync(mediaPath)) {
+    const sampleRate = 16000;
+    const samples = Math.floor(sampleRate * 1);
+    const dataSize = samples * 2;
+    const buffer = Buffer.alloc(44 + dataSize);
+    buffer.write("RIFF", 0);
+    buffer.writeUInt32LE(36 + dataSize, 4);
+    buffer.write("WAVE", 8);
+    buffer.write("fmt ", 12);
+    buffer.writeUInt32LE(16, 16);
+    buffer.writeUInt16LE(1, 20);
+    buffer.writeUInt16LE(1, 22);
+    buffer.writeUInt32LE(sampleRate, 24);
+    buffer.writeUInt32LE(sampleRate * 2, 28);
+    buffer.writeUInt16LE(2, 32);
+    buffer.writeUInt16LE(16, 34);
+    buffer.write("data", 36);
+    buffer.writeUInt32LE(dataSize, 40);
+    for (let index = 0; index < samples; index += 1) {
+      const t = index / sampleRate;
+      const envelope = Math.min(index / 800, (samples - index) / 800, 1);
+      const value = Math.round(Math.sin(2 * Math.PI * 440 * t) * 2000 * Math.max(envelope, 0));
+      buffer.writeInt16LE(value, 44 + index * 2);
+    }
+    fs.mkdirSync(path.dirname(mediaPath), { recursive: true });
+    fs.writeFileSync(mediaPath, buffer);
   }
-  const merged = {
-    ...DEFAULT_SETTINGS,
-    ...settings,
-    aiTranslation: {
-      ...DEFAULT_SETTINGS.aiTranslation,
-      ...(settings.aiTranslation || {}),
-    },
-    network: {
-      ...DEFAULT_SETTINGS.network,
-      ...(settings.network || {}),
-    },
-    audioEnhancement: {
-      ...DEFAULT_SETTINGS.audioEnhancement,
-      ...(settings.audioEnhancement || {}),
-    },
-    whisperAdvanced: {
-      ...DEFAULT_SETTINGS.whisperAdvanced,
-      ...(settings.whisperAdvanced || {}),
-    },
-    tts: ttsSettings,
-    windowState: {
-      ...DEFAULT_SETTINGS.windowState,
-      ...(settings.windowState || {}),
-    },
-  };
-  merged.translationBackend = "ai";
-  return merged;
+  return mediaPath;
 }
 
 function readSettings() {
-  const settingsPath = getSettingsPath();
-  if (!fs.existsSync(settingsPath)) {
-    return mergeSettings();
-  }
-  try {
-    return mergeSettings(JSON.parse(fs.readFileSync(settingsPath, "utf8")));
-  } catch (_error) {
-    return mergeSettings();
-  }
+  return readSettingsFile(getSettingsPath());
 }
 
 function writeSettings(settings) {
-  const nextSettings = mergeSettings(settings);
-  fs.mkdirSync(path.dirname(getSettingsPath()), { recursive: true });
-  fs.writeFileSync(getSettingsPath(), JSON.stringify(nextSettings, null, 2), "utf8");
-  return nextSettings;
+  return writeSettingsFile(getSettingsPath(), settings);
 }
 
 function getValidatedWindowState() {
@@ -219,45 +146,73 @@ function scheduleWindowStateSave() {
 }
 
 function readHistory() {
-  const historyPath = getHistoryPath();
-  if (!fs.existsSync(historyPath)) {
-    return [];
-  }
-  try {
-    const value = JSON.parse(fs.readFileSync(historyPath, "utf8"));
-    return Array.isArray(value) ? value : [];
-  } catch (_error) {
-    return [];
-  }
-}
-
-function writeHistory(history) {
-  fs.mkdirSync(path.dirname(getHistoryPath()), { recursive: true });
-  fs.writeFileSync(getHistoryPath(), JSON.stringify(history.slice(0, 200), null, 2), "utf8");
-  return history;
+  return readHistoryFile(getHistoryPath());
 }
 
 function upsertHistoryTask(task) {
-  if (!task || !task.file || !task.result) {
-    throw new Error("Invalid history task.");
-  }
-  const history = readHistory();
-  const id = task.id || `${task.file.path}-${Date.now()}`;
-  const nextTask = {
-    id,
-    file: task.file,
-    result: task.result,
-    addedAt: task.addedAt || task.completedAt || new Date().toISOString(),
-    completedAt: task.completedAt || new Date().toISOString(),
-  };
-  const filtered = history.filter((item) => item.id !== id);
-  writeHistory([nextTask, ...filtered]);
-  return nextTask;
+  return upsertHistoryFileTask(getHistoryPath(), task);
 }
 
-function safeExportFileName(fileName) {
-  const baseName = path.basename(String(fileName || "transcription.txt"));
-  return baseName.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_") || "transcription.txt";
+function deleteHistoryTask(id) {
+  return deleteHistoryFileTask(getHistoryPath(), id);
+}
+
+function getSmokeUiHistoryTask() {
+  return {
+    id: "smoke-ui-history",
+    file: { name: "smoke-ui-history.wav", path: "E:\\smoke\\smoke-ui-history.wav", extension: "wav", size: 1234 },
+    result: {
+      detectedLanguage: "zh",
+      segments: [{ start: 0, end: 1, sourceText: "smoke ui history" }],
+    },
+    addedAt: new Date(0).toISOString(),
+    completedAt: new Date(1000).toISOString(),
+  };
+}
+
+function getSmokeUiEditTask() {
+  return {
+    id: "smoke-ui-edit-history",
+    file: { name: "smoke-ui-edit.wav", path: "E:\\smoke\\smoke-ui-edit.wav", extension: "wav", size: 1234 },
+    result: {
+      detectedLanguage: "zh",
+      segments: [{ start: 0, end: 1, sourceText: "smoke edit original" }],
+    },
+    addedAt: new Date(2000).toISOString(),
+    completedAt: new Date(3000).toISOString(),
+  };
+}
+
+function getSmokeRendererTasks() {
+  if (
+    process.env.ASMR_TRANS_SMOKE_TEST !== "1" ||
+    process.env.ASMR_TRANS_SMOKE_PHASE === "restart"
+  ) {
+    return [];
+  }
+  return [
+    {
+      id: "smoke-requeue-failed",
+      file: { name: "smoke-requeue-failed.wav", path: "E:\\smoke\\smoke-requeue-failed.wav", extension: "wav", size: 1234 },
+      status: "failed",
+      progress: null,
+      result: null,
+      error: "smoke failed task",
+      addedAt: new Date(4000).toISOString(),
+    },
+    {
+      id: "smoke-translation-retry",
+      file: { name: "smoke-translation-retry.wav", path: "E:\\smoke\\smoke-translation-retry.wav", extension: "wav", size: 1234 },
+      status: "failed",
+      progress: null,
+      result: {
+        detectedLanguage: "ja",
+        segments: [{ start: 0, end: 1, sourceText: "テスト" }],
+      },
+      error: "smoke translation failed",
+      addedAt: new Date(5000).toISOString(),
+    },
+  ];
 }
 
 function hasModelFiles(modelPath) {
@@ -593,6 +548,8 @@ function ensureTtsDependencies(event, taskId = null) {
 }
 
 function createWindow() {
+  const isSmokeTest = process.env.ASMR_TRANS_SMOKE_TEST === "1";
+  const smokePhase = process.env.ASMR_TRANS_SMOKE_PHASE || "full";
   const windowState = getValidatedWindowState();
   mainWindow = new BrowserWindow({
     width: windowState.width,
@@ -600,6 +557,7 @@ function createWindow() {
     minWidth: 920,
     minHeight: 660,
     title: "ASMR Trans",
+    show: !isSmokeTest,
     backgroundColor: "#f4f1e8",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -609,6 +567,19 @@ function createWindow() {
   });
   if (windowState.isMaximized) {
     mainWindow.maximize();
+  }
+
+  if (isSmokeTest && smokePhase !== "restart") {
+    const smokeSettings = readSettings();
+    writeSettings({
+      ...smokeSettings,
+      aiTranslation: {
+        ...(smokeSettings.aiTranslation || {}),
+        apiKey: "smoke-api-key",
+      },
+    });
+    upsertHistoryTask(getSmokeUiHistoryTask());
+    upsertHistoryTask(getSmokeUiEditTask());
   }
 
   mainWindow.on("resize", scheduleWindowStateSave);
@@ -624,10 +595,637 @@ function createWindow() {
   }
 
   mainWindow.webContents.once("did-finish-load", () => {
+    if (isSmokeTest) {
+      runSmokeTest().catch((error) => {
+        console.error(error);
+        app.exit(1);
+      });
+      return;
+    }
     ensurePythonDependencies().catch((error) => {
-      sendDependencyProgress(`Python 濠电偞鎸荤喊宥囨崲閸℃瑧鐭夐柛鈩冪憿閸嬫捇鎮烽柇锔叫銈冨劚閿曘儱顕ラ崟顒佺秶妞ゆ劑鍎涢弴銏＄叆?{error.message}`, 0);
+      sendDependencyProgress(`Python 依赖安装失败：${error.message}`, 0);
     });
   });
+}
+
+function waitForSmokeCondition(predicate, label, timeoutMs = 5000) {
+  const startedAt = Date.now();
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      try {
+        if (predicate()) {
+          resolve();
+          return;
+        }
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      if (Date.now() - startedAt > timeoutMs) {
+        reject(new Error(`Smoke test failed: timed out waiting for ${label}.`));
+        return;
+      }
+      setTimeout(check, 50);
+    };
+    check();
+  });
+}
+
+async function runSmokeTest() {
+  if (process.env.ASMR_TRANS_SMOKE_PHASE === "restart") {
+    await runSmokeRestartTest();
+    return;
+  }
+
+  const settings = readSettings();
+  writeSettings({
+    ...settings,
+    exportOptions: { txtMode: "source", srtMode: "translation" },
+  });
+  const savedSettings = readSettings();
+  if (savedSettings.exportOptions.txtMode !== "source" || savedSettings.exportOptions.srtMode !== "translation") {
+    throw new Error("Smoke test failed: settings exportOptions did not persist.");
+  }
+
+  const historyTask = {
+    id: "smoke-history",
+    file: { name: "smoke.wav", path: "E:\\smoke\\smoke.wav", extension: "wav" },
+    result: {
+      detectedLanguage: "zh",
+      segments: [{ start: 0, end: 1, sourceText: "smoke" }],
+    },
+    addedAt: new Date(0).toISOString(),
+    completedAt: new Date(1000).toISOString(),
+  };
+  upsertHistoryTask(historyTask);
+  if (!readHistory().some((item) => item.id === historyTask.id)) {
+    throw new Error("Smoke test failed: history upsert did not persist.");
+  }
+  deleteHistoryTask(historyTask.id);
+  if (readHistory().some((item) => item.id === historyTask.id)) {
+    throw new Error("Smoke test failed: history delete did not persist.");
+  }
+
+  const preloadReady = await mainWindow.webContents.executeJavaScript(
+    "Boolean(window.asmrTrans && window.asmrTrans.getSettings && window.asmrTrans.getHistory && window.asmrTrans.deleteHistory)",
+  );
+  if (!preloadReady) {
+    throw new Error("Smoke test failed: preload API is not available.");
+  }
+
+  const uiHistoryTask = getSmokeUiHistoryTask();
+  const uiHistoryVisible = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const deadline = Date.now() + 5000;
+      const tick = () => {
+        const item = Array.from(document.querySelectorAll(".taskItem")).find((node) =>
+          node.textContent && node.textContent.includes("smoke-ui-history.wav")
+        );
+        if (item) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() > deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    })
+  `);
+  if (!uiHistoryVisible) {
+    throw new Error("Smoke test failed: seeded history task did not hydrate into the UI.");
+  }
+
+  const uiDeleteClicked = await mainWindow.webContents.executeJavaScript(`
+    (() => {
+      const item = Array.from(document.querySelectorAll(".taskItem")).find((node) =>
+        node.textContent && node.textContent.includes("smoke-ui-history.wav")
+      );
+      const button = item ? item.querySelector(".taskRemoveButton") : null;
+      if (!button) {
+        return false;
+      }
+      button.click();
+      return true;
+    })()
+  `);
+  if (!uiDeleteClicked) {
+    throw new Error("Smoke test failed: could not click the UI history delete button.");
+  }
+  await waitForSmokeCondition(
+    () => !readHistory().some((item) => item.id === uiHistoryTask.id),
+    "UI history delete persistence",
+  );
+
+  const uiHistoryRemoved = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const deadline = Date.now() + 5000;
+      const tick = () => {
+        const item = Array.from(document.querySelectorAll(".taskItem")).find((node) =>
+          node.textContent && node.textContent.includes("smoke-ui-history.wav")
+        );
+        if (!item) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() > deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    })
+  `);
+  if (!uiHistoryRemoved) {
+    throw new Error("Smoke test failed: UI history task remained visible after delete.");
+  }
+
+  const uiEditTask = getSmokeUiEditTask();
+  const editedSourceText = "smoke edit saved";
+  const uiEditApplied = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const deadline = Date.now() + 5000;
+      const setTextareaValue = (textarea, value) => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
+        setter.call(textarea, value);
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      const tick = () => {
+        const item = Array.from(document.querySelectorAll(".taskItem")).find((node) =>
+          node.textContent && node.textContent.includes("smoke-ui-edit.wav")
+        );
+        if (item) {
+          item.click();
+          const textarea = document.querySelector(".segmentField textarea");
+          if (textarea) {
+            setTextareaValue(textarea, ${JSON.stringify(editedSourceText)});
+            resolve(true);
+            return;
+          }
+        }
+        if (Date.now() > deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    })
+  `);
+  if (!uiEditApplied) {
+    throw new Error("Smoke test failed: could not edit the hydrated history task in the UI.");
+  }
+  await waitForSmokeCondition(
+    () =>
+      readHistory().some(
+        (item) => item.id === uiEditTask.id && item.result?.segments?.[0]?.sourceText === editedSourceText,
+      ),
+    "UI edit auto-save persistence",
+  );
+  const editSaveFeedbackVisible = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const deadline = Date.now() + 5000;
+      const tick = () => {
+        const saved = document.querySelector(".editSaveStatus.saved");
+        if (saved && saved.textContent && saved.textContent.includes("已自动保存")) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() > deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    })
+  `);
+  if (!editSaveFeedbackVisible) {
+    throw new Error("Smoke test failed: UI edit save feedback did not appear.");
+  }
+
+  const failedSourceText = "smoke edit failure";
+  const editFailureFeedbackVisible = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const api = window.asmrTrans;
+      if (!api || !api.failNextHistoryUpsertForSmoke || !api.failNextHistoryUpsertForSmoke()) {
+        resolve(false);
+        return;
+      }
+      const deadline = Date.now() + 5000;
+      const setTextareaValue = (textarea, value) => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
+        setter.call(textarea, value);
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      const tick = () => {
+        const textarea = document.querySelector(".segmentField textarea");
+        if (textarea) {
+          setTextareaValue(textarea, "smoke edit failure");
+          waitForFailure();
+          return;
+        }
+        if (Date.now() > deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      const waitForFailure = () => {
+        const failed = document.querySelector(".editSaveStatus.failed");
+        if (failed && failed.textContent && failed.textContent.includes("保存失败")) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() > deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(waitForFailure, 50);
+      };
+      tick();
+    })
+  `);
+  if (!editFailureFeedbackVisible) {
+    throw new Error("Smoke test failed: UI edit save failure feedback did not appear.");
+  }
+
+  const requeueApplied = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const deadline = Date.now() + 5000;
+      const dumpTasks = () => Array.from(document.querySelectorAll(".taskItem")).map((node) => node.textContent || "");
+      const tick = () => {
+        const item = Array.from(document.querySelectorAll(".taskItem")).find((node) =>
+          node.textContent && node.textContent.includes("smoke-requeue-failed.wav")
+        );
+        const button = item ? item.querySelector(".taskInlineActions button") : null;
+        if (button) {
+          button.click();
+          resolve({ ok: true, tasks: dumpTasks() });
+          return;
+        }
+        if (Date.now() > deadline) {
+          resolve({ ok: false, tasks: dumpTasks() });
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    })
+  `);
+  if (!requeueApplied.ok) {
+    throw new Error(`Smoke test failed: could not click the requeue button. Tasks: ${JSON.stringify(requeueApplied.tasks)}`);
+  }
+  const requeueStateVisible = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const deadline = Date.now() + 5000;
+      const tick = () => {
+        const item = Array.from(document.querySelectorAll(".taskItem")).find((node) =>
+          node.textContent && node.textContent.includes("smoke-requeue-failed.wav")
+        );
+        if (item && item.querySelector(".taskStatus.queued")) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() > deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    })
+  `);
+  if (!requeueStateVisible) {
+    throw new Error("Smoke test failed: requeued task did not return to queued state.");
+  }
+
+  const retryTranslationApplied = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const deadline = Date.now() + 5000;
+      const tick = () => {
+        const item = Array.from(document.querySelectorAll(".taskItem")).find((node) =>
+          node.textContent && node.textContent.includes("smoke-translation-retry.wav")
+        );
+        const buttons = item ? Array.from(item.querySelectorAll(".taskInlineActions button")) : [];
+        const button = buttons[1] || null;
+        if (button) {
+          button.click();
+          resolve(true);
+          return;
+        }
+        if (Date.now() > deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    })
+  `);
+  if (!retryTranslationApplied) {
+    throw new Error("Smoke test failed: could not click the translation retry button.");
+  }
+  const retryTranslationStateVisible = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const deadline = Date.now() + 5000;
+      const tick = () => {
+        const item = Array.from(document.querySelectorAll(".taskItem")).find((node) =>
+          node.textContent && node.textContent.includes("smoke-translation-retry.wav")
+        );
+        const status = item ? item.querySelector(".taskStatus.running") : null;
+        if (status && status.textContent && status.textContent.includes("55%")) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() > deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    })
+  `);
+  if (!retryTranslationStateVisible) {
+    throw new Error("Smoke test failed: translation retry did not enter translate running state.");
+  }
+
+  const queueControlResult = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const deadline = Date.now() + 10000;
+      const findButton = (label) => Array.from(document.querySelectorAll("button")).find((node) =>
+        node.textContent && node.textContent.includes(label)
+      );
+      const findTask = () => Array.from(document.querySelectorAll(".taskItem")).find((node) =>
+        node.textContent && node.textContent.includes("smoke-requeue-failed.wav")
+      );
+      const waitFor = (check, label, next) => {
+        const tick = () => {
+          if (check()) {
+            next();
+            return;
+          }
+          if (Date.now() > deadline) {
+            resolve({ ok: false, label, tasks: Array.from(document.querySelectorAll(".taskItem")).map((node) => node.textContent || "") });
+            return;
+          }
+          setTimeout(tick, 50);
+        };
+        tick();
+      };
+
+      const start = findButton("开始队列");
+      if (!start || start.disabled) {
+        resolve({ ok: false, label: "start unavailable" });
+        return;
+      }
+      start.click();
+      waitFor(() => {
+        const item = findTask();
+        return item && item.querySelector(".taskStatus.running");
+      }, "running after start", () => {
+        const pause = findButton("暂停");
+        if (!pause || pause.disabled) {
+          resolve({ ok: false, label: "pause unavailable" });
+          return;
+        }
+        pause.click();
+        waitFor(() => {
+          const resume = findButton("恢复");
+          return resume && !resume.disabled;
+        }, "resume visible", () => {
+          const resume = findButton("恢复");
+          resume.click();
+          waitFor(() => {
+            const pauseAgain = findButton("暂停");
+            return pauseAgain && !pauseAgain.disabled;
+          }, "pause restored", () => {
+            const cancel = findButton("取消任务");
+            if (!cancel || cancel.disabled) {
+              resolve({ ok: false, label: "cancel unavailable" });
+              return;
+            }
+            cancel.click();
+            waitFor(() => {
+              const item = findTask();
+              return item && item.querySelector(".taskStatus.canceled");
+            }, "canceled after cancel", () => {
+              const item = findTask();
+              const requeue = item ? item.querySelector(".taskInlineActions button") : null;
+              if (!requeue) {
+                resolve({ ok: false, label: "requeue unavailable after cancel" });
+                return;
+              }
+              requeue.click();
+              waitFor(() => {
+                const nextItem = findTask();
+                return nextItem && nextItem.querySelector(".taskStatus.queued");
+              }, "queued after requeue", () => {
+                const secondStart = findButton("开始队列");
+                if (!secondStart || secondStart.disabled) {
+                  resolve({ ok: false, label: "second start unavailable" });
+                  return;
+                }
+                secondStart.click();
+                waitFor(() => {
+                  const doneItem = findTask();
+                  return doneItem && doneItem.querySelector(".taskStatus.done");
+                }, "done after restart", () => resolve({ ok: true }));
+              });
+            });
+          });
+        });
+      });
+    })
+  `);
+  if (!queueControlResult.ok) {
+    throw new Error(`Smoke test failed: queue control flow failed at ${queueControlResult.label}. ${JSON.stringify(queueControlResult)}`);
+  }
+
+  const addFileResult = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const add = Array.from(document.querySelectorAll("button")).find((node) =>
+        node.textContent && node.textContent.includes("添加文件")
+      );
+      if (!add || add.disabled) {
+        resolve(false);
+        return;
+      }
+      add.click();
+      const deadline = Date.now() + 5000;
+      const tick = () => {
+        const item = Array.from(document.querySelectorAll(".taskItem")).find((node) =>
+          node.textContent && node.textContent.includes("smoke-selected.wav")
+        );
+        if (item) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() > deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    })
+  `);
+  if (!addFileResult) {
+    throw new Error("Smoke test failed: add file flow did not add the selected media task.");
+  }
+
+  const editTaskReselectedForExport = await mainWindow.webContents.executeJavaScript(`
+    (() => {
+      const item = Array.from(document.querySelectorAll(".taskItem")).find((node) =>
+        node.textContent && node.textContent.includes("smoke-ui-edit.wav")
+      );
+      if (!item) {
+        return false;
+      }
+      item.click();
+      return true;
+    })()
+  `);
+  if (!editTaskReselectedForExport) {
+    throw new Error("Smoke test failed: could not reselect edited task before export.");
+  }
+
+  const exportClicksApplied = await mainWindow.webContents.executeJavaScript(`
+    (() => {
+      const clickButton = (label) => {
+        const button = Array.from(document.querySelectorAll(".exportActions button")).find((node) =>
+          node.textContent && node.textContent.includes(label)
+        );
+        if (!button || button.disabled) {
+          return false;
+        }
+        button.click();
+        return true;
+      };
+      return [
+        clickButton("保存为 txt"),
+        clickButton("保存为 srt"),
+        clickButton("批量导出 txt"),
+        clickButton("批量导出 srt"),
+      ];
+    })()
+  `);
+  if (!Array.isArray(exportClicksApplied) || exportClicksApplied.some((clicked) => !clicked)) {
+    throw new Error(`Smoke test failed: export buttons were not all clickable. ${JSON.stringify(exportClicksApplied)}`);
+  }
+  await waitForSmokeCondition(() => {
+    const directory = getSmokeExportDir();
+    if (!fs.existsSync(directory)) {
+      return false;
+    }
+    const files = fs.readdirSync(directory);
+    return (
+      files.includes("smoke-ui-edit.txt") &&
+      files.includes("smoke-ui-edit.srt") &&
+      files.some((file) => /^smoke-ui-edit-\d+\.txt$/.test(file)) &&
+      files.some((file) => /^smoke-ui-edit-\d+\.srt$/.test(file))
+    );
+  }, "UI export files");
+
+  const smokeExportDir = getSmokeExportDir();
+  const exportedFiles = fs.readdirSync(smokeExportDir);
+  const singleTxt = fs.readFileSync(path.join(smokeExportDir, "smoke-ui-edit.txt"), "utf8");
+  const singleSrt = fs.readFileSync(path.join(smokeExportDir, "smoke-ui-edit.srt"), "utf8");
+  const batchTxtName = exportedFiles.find((file) => /^smoke-ui-edit-\d+\.txt$/.test(file));
+  const batchSrtName = exportedFiles.find((file) => /^smoke-ui-edit-\d+\.srt$/.test(file));
+  const batchTxt = fs.readFileSync(path.join(smokeExportDir, batchTxtName), "utf8");
+  const batchSrt = fs.readFileSync(path.join(smokeExportDir, batchSrtName), "utf8");
+  if (
+    !singleTxt.includes(failedSourceText) ||
+    !singleSrt.includes(failedSourceText) ||
+    !batchTxt.includes(failedSourceText) ||
+    !batchSrt.includes(failedSourceText)
+  ) {
+    throw new Error("Smoke test failed: exported TXT/SRT files did not contain the current edited segment text.");
+  }
+
+  console.log("electron smoke checks passed");
+  app.exit(0);
+}
+
+async function runSmokeRestartTest() {
+  const settings = readSettings();
+  if (settings.exportOptions?.txtMode !== "source" || settings.exportOptions?.srtMode !== "translation") {
+    throw new Error("Smoke restart failed: persisted export settings were not restored.");
+  }
+  if (!settings.aiTranslation?.apiKey) {
+    throw new Error("Smoke restart failed: persisted AI key was not restored.");
+  }
+
+  const history = readHistory();
+  if (history.some((item) => item.id === getSmokeUiHistoryTask().id)) {
+    throw new Error("Smoke restart failed: deleted history task was restored.");
+  }
+  if (!history.some((item) => item.id === getSmokeUiEditTask().id && item.result?.segments?.[0]?.sourceText === "smoke edit saved")) {
+    throw new Error("Smoke restart failed: edited history task was not persisted.");
+  }
+
+  const restartUiState = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const deadline = Date.now() + 5000;
+      const tick = () => {
+        const tasks = Array.from(document.querySelectorAll(".taskItem")).map((node) => node.textContent || "");
+        const deletedVisible = tasks.some((text) => text.includes("smoke-ui-history.wav"));
+        const editedVisible = tasks.some((text) => text.includes("smoke-ui-edit.wav"));
+        if (!deletedVisible && editedVisible) {
+          resolve({ ok: true, tasks });
+          return;
+        }
+        if (Date.now() > deadline) {
+          resolve({ ok: false, tasks });
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    })
+  `);
+  if (!restartUiState.ok) {
+    throw new Error(`Smoke restart failed: history hydration state was wrong. Tasks: ${JSON.stringify(restartUiState.tasks)}`);
+  }
+
+  const settingsSummaryReady = await mainWindow.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const openButton = Array.from(document.querySelectorAll("button")).find((node) =>
+        node.textContent && node.textContent.includes("设置")
+      );
+      if (!openButton || openButton.disabled) {
+        resolve({ ok: false, reason: "settings button unavailable" });
+        return;
+      }
+      openButton.click();
+      const deadline = Date.now() + 5000;
+      const tick = () => {
+        const summary = document.querySelector(".settingsSummaryBlock");
+        const text = summary ? summary.textContent || "" : "";
+        if (text.includes("TXT: 仅原文") && text.includes("SRT: 仅译文") && text.includes("已配置")) {
+          resolve({ ok: true, text });
+          return;
+        }
+        if (Date.now() > deadline) {
+          resolve({ ok: false, text });
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    })
+  `);
+  if (!settingsSummaryReady.ok) {
+    throw new Error(`Smoke restart failed: settings summary did not reflect persisted settings. ${JSON.stringify(settingsSummaryReady)}`);
+  }
+
+  console.log("electron smoke restart checks passed");
+  app.exit(0);
 }
 
 app.whenReady().then(() => {
@@ -656,7 +1254,31 @@ app.on("before-quit", () => {
   activeTranslationWorkers.clear();
 });
 
+ipcMain.on("smoke:tasks", (event) => {
+  event.returnValue = getSmokeRendererTasks();
+});
+
+ipcMain.on("smoke:fail-next-history-upsert", (event) => {
+  if (process.env.ASMR_TRANS_SMOKE_TEST === "1") {
+    failNextHistoryUpsertForSmoke = true;
+    event.returnValue = true;
+    return;
+  }
+  event.returnValue = false;
+});
+
 ipcMain.handle("audio:select", async () => {
+  if (process.env.ASMR_TRANS_SMOKE_TEST === "1") {
+    const mediaPath = getSmokeSelectedMediaPath();
+    const stat = fs.statSync(mediaPath);
+    return [{
+      path: mediaPath,
+      name: path.basename(mediaPath),
+      size: stat.size,
+      extension: "wav",
+    }];
+  }
+
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Select media files",
     properties: ["openFile", "multiSelections"],
@@ -733,8 +1355,16 @@ ipcMain.handle("history:get", async () => {
 });
 
 ipcMain.handle("history:upsert", async (_event, task) => {
+  if (failNextHistoryUpsertForSmoke) {
+    failNextHistoryUpsertForSmoke = false;
+    throw new Error("Smoke injected history upsert failure.");
+  }
   const saved = upsertHistoryTask(task);
   return { saved: true, id: saved.id };
+});
+
+ipcMain.handle("history:delete", async (_event, id) => {
+  return deleteHistoryTask(id);
 });
 
 ipcMain.handle("deps:retry", async () => {
@@ -763,6 +1393,33 @@ ipcMain.handle("transcribe:start", async (event, payload) => {
   }
   if (activeTtsWorker) {
     throw new Error("A speech generation task is running. Wait for it to finish before starting transcription.");
+  }
+
+  if (process.env.ASMR_TRANS_SMOKE_TEST === "1") {
+    const startCount = (smokeTranscriptionStartsByPath.get(payload.audioPath) || 0) + 1;
+    smokeTranscriptionStartsByPath.set(payload.audioPath, startCount);
+    smokeTranscriptionRunning = true;
+    event.sender.send("transcribe:progress", {
+      stage: "transcribe",
+      message: "Smoke transcription running.",
+      percent: 20,
+      elapsedSeconds: 0,
+      stageElapsedSeconds: 0,
+    });
+    if (startCount >= 2) {
+      setTimeout(() => {
+        if (!smokeTranscriptionRunning) {
+          return;
+        }
+        smokeTranscriptionRunning = false;
+        event.sender.send("transcribe:done", {
+          detectedLanguage: "zh",
+          computeDevice: "cpu",
+          segments: [{ start: 0, end: 1, sourceText: "smoke transcription done", translatedText: null }],
+        });
+      }, 100);
+    }
+    return { started: true };
   }
 
   await ensurePythonDependencies();
@@ -873,6 +1530,11 @@ ipcMain.handle("transcribe:start", async (event, payload) => {
 });
 
 ipcMain.handle("transcribe:cancel", async (event) => {
+  if (process.env.ASMR_TRANS_SMOKE_TEST === "1" && smokeTranscriptionRunning) {
+    smokeTranscriptionRunning = false;
+    event.sender.send("transcribe:canceled", { message: "\u4efb\u52a1\u5df2\u53d6\u6d88\u3002" });
+    return { canceled: true };
+  }
   if (!activeWorker) {
     return { canceled: false };
   }
@@ -894,6 +1556,9 @@ ipcMain.handle("translate:start", async (event, payload) => {
   }
   if (activeTranslationWorkers.has(payload.taskId)) {
     throw new Error("Translation task is already running.");
+  }
+  if (process.env.ASMR_TRANS_SMOKE_TEST === "1") {
+    return { started: true };
   }
 
   await ensurePythonDependencies();
@@ -1145,6 +1810,14 @@ ipcMain.handle("export:txt", async (_event, payload) => {
     throw new Error("There is no transcription result to save.");
   }
 
+  if (process.env.ASMR_TRANS_SMOKE_TEST === "1") {
+    const directory = getSmokeExportDir();
+    fs.mkdirSync(directory, { recursive: true });
+    const filePath = path.join(directory, safeExportFileName(payload.defaultFileName || "transcription.txt"));
+    fs.writeFileSync(filePath, payload.content, "utf8");
+    return { saved: true, path: filePath };
+  }
+
   const extension = (path.extname(payload.defaultFileName || "").slice(1).toLowerCase() || "txt").replace(/[^a-z0-9]/g, "");
   const safeExtension = extension || "txt";
   const filterName = safeExtension.toUpperCase();
@@ -1166,10 +1839,20 @@ ipcMain.handle("export:txt", async (_event, payload) => {
 });
 
 ipcMain.handle("export:batch", async (_event, payload) => {
-  const items = Array.isArray(payload?.items) ? payload.items : [];
-  const exportableItems = items.filter((item) => typeof item.content === "string" && item.content.trim());
+  const exportableItems = getExportableItems(payload?.items);
   if (!exportableItems.length) {
     throw new Error("There is no completed transcription result to export.");
+  }
+
+  if (process.env.ASMR_TRANS_SMOKE_TEST === "1") {
+    const directory = getSmokeExportDir();
+    fs.mkdirSync(directory, { recursive: true });
+    const usedNames = new Set();
+    for (const item of exportableItems) {
+      const candidate = getUniqueExportFileName(directory, item.fileName, usedNames);
+      fs.writeFileSync(path.join(directory, candidate), item.content, "utf8");
+    }
+    return { saved: true, directory, count: exportableItems.length };
   }
 
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -1185,15 +1868,7 @@ ipcMain.handle("export:batch", async (_event, payload) => {
   fs.mkdirSync(directory, { recursive: true });
   const usedNames = new Set();
   for (const item of exportableItems) {
-    const parsed = path.parse(safeExportFileName(item.fileName));
-    const extension = parsed.ext || ".txt";
-    let candidate = `${parsed.name || "transcription"}${extension}`;
-    let index = 2;
-    while (usedNames.has(candidate.toLowerCase()) || fs.existsSync(path.join(directory, candidate))) {
-      candidate = `${parsed.name || "transcription"}-${index}${extension}`;
-      index += 1;
-    }
-    usedNames.add(candidate.toLowerCase());
+    const candidate = getUniqueExportFileName(directory, item.fileName, usedNames);
     fs.writeFileSync(path.join(directory, candidate), item.content, "utf8");
   }
 

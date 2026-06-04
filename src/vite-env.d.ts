@@ -87,6 +87,13 @@ type TtsSettings = {
   retryBadcaseRatioThreshold: number;
 };
 
+type ExportContentMode = "bilingual" | "translation" | "source";
+
+type ExportSettings = {
+  txtMode: ExportContentMode;
+  srtMode: ExportContentMode;
+};
+
 type AppSettings = {
   whisperModel: WhisperModelName;
   computeDevice: ComputeDevice;
@@ -96,6 +103,7 @@ type AppSettings = {
   audioEnhancement: AudioEnhancementSettings;
   whisperAdvanced: WhisperAdvancedSettings;
   tts: TtsSettings;
+  exportOptions: ExportSettings;
 };
 
 type TranscriptionProgress = {
@@ -146,6 +154,14 @@ type HistoryTask = {
   completedAt: string;
 };
 
+type HistoryDeleteRequest = {
+  id?: string;
+  ids?: string[];
+  filePath?: string;
+  completedAt?: string;
+  filePathOnly?: boolean;
+};
+
 type WorkerError = {
   message: string;
   traceback?: string;
@@ -160,6 +176,9 @@ interface Window {
     updateSettings: (settings: AppSettings) => Promise<AppSettings>;
     getHistory: () => Promise<HistoryTask[]>;
     upsertHistory: (task: HistoryTask) => Promise<{ saved: boolean; id: string }>;
+    deleteHistory: (request: string | HistoryDeleteRequest) => Promise<{ deleted: boolean; id: string }>;
+    getSmokeTasks?: () => QueueTask[];
+    failNextHistoryUpsertForSmoke?: () => boolean;
     retryDependencies: () => Promise<{ ok: boolean }>;
     installTtsDependencies: () => Promise<{ ok: boolean }>;
     cancelTranscription: () => Promise<{ canceled: boolean }>;

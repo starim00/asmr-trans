@@ -854,12 +854,91 @@ def tts(request):
             pass
 
 
+def smoke_media(media_path):
+    media_info = inspect_media_audio(media_path)
+    samples = decode_media_to_mono_float32(media_path, sample_rate=16000, max_seconds=2)
+    enhanced = enhance_audio_samples(
+        samples,
+        {
+            "enabled": True,
+            "normalize": True,
+            "compression": True,
+            "denoise": True,
+            "mono": True,
+            "targetPeak": 0.8,
+            "noiseGateDb": -50,
+        },
+    )
+    return {
+        "ok": True,
+        "audioStreamCount": media_info["audioStreamCount"],
+        "duration": round(float(media_info["duration"] or 0), 3),
+        "sampleCount": int(getattr(samples, "size", 0)),
+        "enhancedSampleCount": int(getattr(enhanced, "size", 0)),
+    }
+
+
+def install_fake_whisper_module(language="zh"):
+    class FakeSegment:
+        def __init__(self, start, end, text):
+            self.start = start
+            self.end = end
+            self.text = text
+
+    class FakeInfo:
+        def __init__(self):
+            self.language = language
+            self.duration = 1.0
+
+    class FakeWhisperModel:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def transcribe(self, _audio_input, **_kwargs):
+            return [FakeSegment(0.0, 1.0, "smoke transcription")], FakeInfo()
+
+    fake_module = type(sys)("faster_whisper")
+    fake_module.WhisperModel = FakeWhisperModel
+    sys.modules["faster_whisper"] = fake_module
+
+
+def smoke_transcribe(media_path):
+    with tempfile.TemporaryDirectory(prefix="asmr-trans-worker-models-") as models_dir:
+        install_fake_whisper_module("zh")
+        return transcribe(
+            {
+                "audioPath": media_path,
+                "whisperModel": "smoke",
+                "computeDevice": "cpu",
+                "modelsDir": models_dir,
+                "translateAfterTranscribe": False,
+                "audioEnhancement": {
+                    "enabled": True,
+                    "normalize": True,
+                    "compression": True,
+                    "denoise": True,
+                    "mono": True,
+                    "targetPeak": 0.8,
+                    "noiseGateDb": -50,
+                },
+                "whisperAdvanced": {
+                    "beamSize": 1,
+                    "vadFilter": False,
+                    "noSpeechThreshold": 0.6,
+                    "conditionOnPreviousText": False,
+                },
+            }
+        )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--check-deps", action="store_true")
     parser.add_argument("--check-tts-deps", action="store_true")
     parser.add_argument("--hardware", action="store_true")
+    parser.add_argument("--smoke-media")
+    parser.add_argument("--smoke-transcribe")
     parser.add_argument("--request-file")
     args = parser.parse_args()
 
@@ -883,6 +962,18 @@ def main():
 
     if args.hardware:
         print(json.dumps(get_hardware_status(), ensure_ascii=False))
+        return
+
+    if args.smoke_media:
+        print(json.dumps(smoke_media(args.smoke_media), ensure_ascii=False))
+        return
+
+    if args.smoke_transcribe:
+        try:
+            emit("done", smoke_transcribe(args.smoke_transcribe))
+        except Exception as error:
+            emit("error", {"message": str(error), "traceback": traceback.format_exc()})
+            sys.exit(1)
         return
 
     try:
