@@ -312,6 +312,7 @@ const text = {
   timestampCopied: "已复制时间：",
   cannotSplitSegment: "当前分段文本太短，无法拆分。",
   dismissAlert: "关闭提示",
+  dismissSuccess: "关闭成功提示",
   models: "\u6a21\u578b\u72b6\u6001",
   firstUseDownload: "\u9996\u6b21\u4f7f\u7528\u4e0b\u8f7d",
   downloaded: "\u5df2\u4e0b\u8f7d",
@@ -749,6 +750,14 @@ function App() {
     }, ALERT_AUTO_DISMISS_MS);
     return () => window.clearTimeout(timer);
   }, [error]);
+
+  useEffect(() => {
+    if (!savedPath) return undefined;
+    const timer = window.setTimeout(() => {
+      setSavedPath(null);
+    }, ALERT_AUTO_DISMISS_MS);
+    return () => window.clearTimeout(timer);
+  }, [savedPath]);
 
   useEffect(() => {
     if (resultScrollRef.current) {
@@ -2142,6 +2151,9 @@ function App() {
             {text.saved}
             {savedPath}
           </span>
+          <button className="alertCloseButton" type="button" onClick={() => setSavedPath(null)} aria-label={text.dismissSuccess} title={text.dismissSuccess}>
+            <X size={14} />
+          </button>
         </div>
       )}
 
