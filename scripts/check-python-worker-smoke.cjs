@@ -126,6 +126,24 @@ function spawnWorker(args, input = "") {
 async function main() {
 try {
   writeTestWav(wavPath);
+  const hardwareResult = spawnSync("py", ["-3", "python\\worker.py", "--hardware"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 30000,
+  });
+
+  if (hardwareResult.stdout) process.stdout.write(hardwareResult.stdout);
+  if (hardwareResult.stderr) process.stderr.write(hardwareResult.stderr);
+  if (hardwareResult.error) throw hardwareResult.error;
+  if (hardwareResult.status !== 0) {
+    throw new Error(`Python worker hardware check exited with status ${hardwareResult.status}`);
+  }
+  const hardware = JSON.parse(String(hardwareResult.stdout || "").trim());
+  assert.equal(typeof hardware.ctranslate2CudaSmokeOk, "boolean");
+  assert.ok(Array.isArray(hardware.ctranslate2SupportedCudaComputeTypes));
+  assert.equal(typeof hardware.cudaRuntime, "object");
+  assert.equal(typeof hardware.cudaRuntime.source, "string");
+
   const mediaResult = spawnSync("py", ["-3", "python\\worker.py", "--smoke-media", wavPath], {
     cwd: root,
     encoding: "utf8",

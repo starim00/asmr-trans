@@ -20,7 +20,7 @@ The product goal is practical ASMR/audio transcription:
 - Supported formats: `mp3`, `wav`, `m4a`, `flac`, `ogg`, `aac`, `mp4`, `mkv`, `mov`, `webm`, `avi`, `wmv`.
 - Queue states: queued, running, done, failed, canceled.
 - Queue controls: start, pause, resume, cancel, remove.
-- Start readiness checks block likely translation tasks when the AI API key is missing, and block explicit CUDA mode when CTranslate2 CUDA is unavailable. Missing Whisper models and `auto` CPU fallback are warnings, not blockers.
+- Start readiness checks block likely translation tasks when the AI API key is missing, and block explicit CUDA mode when CTranslate2 CUDA smoke checks fail. Missing Whisper models and `auto` CPU fallback are warnings, not blockers.
 - Transcription is intentionally serialized through one Whisper worker, while LLM translation can run in parallel after each Japanese task finishes transcription.
 - Failed or canceled tasks can be requeued without losing existing results. Failed Japanese tasks with source segments can retry AI translation without rerunning Whisper.
 - Task ordering should be stable by `addedAt`; history must load in add order, with a UI toggle for reverse display.
@@ -44,6 +44,7 @@ The product goal is practical ASMR/audio transcription:
 - Recognition presets that adjust enhancement and Whisper advanced parameters, but must not change the selected Whisper model.
 - OpenAI-compatible AI translation with configurable base URL, API key, model, prompts, context window, retries, timeout, and independent AI proxy.
 - Dependency/model download proxy, separate from AI proxy.
+- CUDA runtime dependencies are not bundled. System CUDA is preferred; the settings drawer can install/repair NVIDIA CUDA 12 runtime wheels inside the app Python environment and the app only injects those DLL paths into Python worker subprocesses.
 - The settings drawer includes a compact current-configuration summary for model, device, AI, audio enhancement, and export modes.
 - Progress display with realtime speed factor, ETA, elapsed time, and per-stage timing.
 
@@ -176,6 +177,7 @@ Current release outputs should look like:
 ## GPU And Dependency Lessons
 
 - RTX/CUDA support depends on both faster-whisper/CTranslate2 and the local CUDA runtime DLLs.
+- Normal Python dependencies are installed from `python/requirements.txt`. Do not reintroduce a misleading `requirements-cuda.txt`; CUDA runtime packages are managed by the Electron CUDA install/repair flow.
 - Common CUDA failure:
 
   ```text

@@ -43,10 +43,21 @@ def cuda_runtime_status():
     for directory in os.environ.get("PATH", "").split(os.pathsep):
         if directory and Path(directory).exists():
             cudnn_candidates.extend(str(path) for path in Path(directory).glob("cudnn64*.dll"))
+    dll_directories = sorted(
+        {
+            str(Path(path).parent)
+            for path in ([cublas] if cublas else []) + cudnn_candidates[:5]
+            if path
+        }
+    )
     return {
+        "source": os.environ.get("ASMR_TRANS_CUDA_RUNTIME_SOURCE") or "system",
         "cublas64_12": cublas,
+        "cublasFound": bool(cublas),
         "cudnnDlls": cudnn_candidates[:5],
+        "cudnnFound": len(cudnn_candidates) > 0,
         "cudnnAvailable": len(cudnn_candidates) > 0,
+        "dllDirectories": dll_directories,
     }
 
 
@@ -81,20 +92,49 @@ def parse_request(request_file=None):
 
 
 def get_hardware_status():
+    diagnostics = []
+    supported_cuda_compute_types = []
     try:
         import ctranslate2
 
         ctranslate_cuda_count = ctranslate2.get_cuda_device_count()
-    except Exception:
+        if ctranslate_cuda_count:
+            try:
+                supported_cuda_compute_types = sorted(ctranslate2.get_supported_compute_types("cuda"))
+            except Exception as error:
+                diagnostics.append(f"Unable to query CUDA compute types: {error}")
+    except Exception as error:
+        diagnostics.append(f"Unable to query CTranslate2 CUDA devices: {error}")
         ctranslate_cuda_count = 0
 
+    runtime = cuda_runtime_status()
+    runtime_ready = bool(runtime.get("cublasFound")) and bool(runtime.get("cudnnFound"))
+    ctranslate2_cuda_smoke_ok = ctranslate_cuda_count > 0 and bool(supported_cuda_compute_types) and runtime_ready
+    source = runtime.get("source") or "system"
+    if ctranslate_cuda_count <= 0 and source != "system":
+        source = "missing"
+    elif ctranslate_cuda_count > 0 and not ctranslate2_cuda_smoke_ok and source not in {"system", "python-wheel"}:
+        source = "failed"
+    runtime["source"] = source
+    error = None
+    if ctranslate_cuda_count > 0 and not runtime_ready:
+        error = "CUDA device was detected, but cuBLAS/cuDNN runtime DLLs were not found."
+    elif ctranslate_cuda_count <= 0:
+        error = "No CUDA device was detected by CTranslate2."
+    elif not supported_cuda_compute_types:
+        error = "CTranslate2 CUDA compute types could not be queried."
+
     return {
-        "ctranslate2CudaAvailable": ctranslate_cuda_count > 0,
+        "ctranslate2CudaAvailable": ctranslate2_cuda_smoke_ok,
         "ctranslate2CudaDeviceCount": ctranslate_cuda_count,
-        "cudaAvailable": ctranslate_cuda_count > 0,
+        "ctranslate2CudaSmokeOk": ctranslate2_cuda_smoke_ok,
+        "ctranslate2SupportedCudaComputeTypes": supported_cuda_compute_types,
+        "cudaAvailable": ctranslate2_cuda_smoke_ok,
         "cudaDeviceCount": ctranslate_cuda_count,
         "cudaDeviceName": "CUDA device" if ctranslate_cuda_count else None,
-        "cudaRuntime": cuda_runtime_status(),
+        "cudaRuntime": runtime,
+        "diagnostics": diagnostics,
+        "error": error,
     }
 
 
@@ -142,24 +182,53 @@ def resolve_device(requested_device):
     requested = (requested_device or "auto").lower()
     hardware_status = get_hardware_status()
     whisper_cuda_available = bool(hardware_status.get("ctranslate2CudaAvailable"))
+    supported_cuda_compute_types = set(hardware_status.get("ctranslate2SupportedCudaComputeTypes") or [])
 
     if requested == "cuda":
         if not whisper_cuda_available:
-            raise RuntimeError("GPU mode was requested, but CUDA is not available to faster-whisper.")
-        return "cuda", "float16", hardware_status
+            source = (hardware_status.get("cudaRuntime") or {}).get("source") or "unknown"
+            message = hardware_status.get("error") or "CUDA is not available to faster-whisper."
+            raise RuntimeError(f"GPU mode was requested, but CTranslate2 CUDA is not ready ({source}). {message}")
+        return "cuda", select_cuda_compute_type(supported_cuda_compute_types), hardware_status
 
     if requested == "auto" and whisper_cuda_available:
-        return "cuda", "float16", hardware_status
+        return "cuda", select_cuda_compute_type(supported_cuda_compute_types), hardware_status
 
     return "cpu", "int8", hardware_status
+
+
+def select_cuda_compute_type(supported_compute_types):
+    supported = set(supported_compute_types or [])
+    if "int8_float16" in supported:
+        return "int8_float16"
+    if "float16" in supported:
+        return "float16"
+    raise RuntimeError(
+        "CTranslate2 CUDA is available, but neither int8_float16 nor float16 compute type is supported. "
+        f"Supported compute types: {sorted(supported)}"
+    )
 
 
 def is_cuda_runtime_error(error):
     message = str(error).lower()
     return any(
         needle in message
-        for needle in ["cublas", "cudnn", "cuda", "cublas64_12.dll"]
+        for needle in ["cublas", "cudnn", "cuda", "cublas64_12.dll", "out of memory", "unsupported compute type"]
     )
+
+
+def cuda_error_message(error):
+    message = str(error)
+    lower_message = message.lower()
+    if "out of memory" in lower_message:
+        reason = "CUDA mode failed because GPU memory is insufficient. Try a smaller Whisper model, Auto/CPU, or a lower-memory CUDA compute mode."
+    elif "unsupported compute type" in lower_message:
+        reason = "CUDA mode failed because the selected compute type is not supported by this GPU/CTranslate2 backend."
+    elif "cublas" in lower_message or "cudnn" in lower_message or "cublas64_12.dll" in lower_message:
+        reason = "CUDA mode failed because CUDA runtime DLLs are missing. Install/repair CUDA dependencies, or choose Auto/CPU."
+    else:
+        reason = "CUDA mode failed. Install/repair CUDA dependencies, update the NVIDIA driver, or choose Auto/CPU."
+    return f"{reason} Original error: {message}"
 
 
 def model_dirs(models_dir):
@@ -571,11 +640,7 @@ def transcribe(request):
             )
         else:
             if device == "cuda" and cuda_runtime_missing:
-                raise RuntimeError(
-                    "CUDA mode failed because CUDA runtime DLLs are missing. "
-                    "Install NVIDIA CUDA 12 runtime/cuBLAS/cuDNN, or choose Auto/CPU. "
-                    f"Original error: {message}"
-                ) from error
+                raise RuntimeError(cuda_error_message(message)) from error
             raise
 
     audio_input = prepare_audio_input(audio_path, request.get("audioEnhancement") or {})
@@ -611,11 +676,7 @@ def transcribe(request):
             )
         else:
             if device == "cuda" and is_cuda_runtime_error(error):
-                raise RuntimeError(
-                    "CUDA mode failed because CUDA runtime DLLs are missing. "
-                    "Install NVIDIA CUDA 12 runtime/cuBLAS/cuDNN, or choose Auto/CPU. "
-                    f"Original error: {error}"
-                ) from error
+                raise RuntimeError(cuda_error_message(error)) from error
             raise
 
     transcription_duration = media_duration or float(getattr(info, "duration", 0) or 0)

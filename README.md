@@ -65,6 +65,8 @@ $env:ASMR_TRANS_PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/"
 
 The app has `Auto / CPU / CUDA` compute modes for Whisper. CUDA mode uses `faster-whisper` / `ctranslate2`; PyTorch is no longer required because local NLLB translation has been removed.
 
+CUDA runtime dependencies are not bundled with the app. The app first tries the system CUDA environment. If CTranslate2 cannot use the system CUDA runtime, use the settings drawer's CUDA install/repair button to install NVIDIA CUDA 12 runtime wheels into the app's Python environment. The app only appends those wheel DLL directories to Python worker subprocesses and does not modify the system `PATH`.
+
 Install dependencies:
 
 ```powershell
@@ -77,7 +79,7 @@ Verify CUDA visibility:
 py -3 python\worker.py --hardware
 ```
 
-Expected CUDA-capable output includes `ctranslate2CudaAvailable: true` and a positive `ctranslate2CudaDeviceCount`. If CUDA mode reports missing DLLs, install NVIDIA CUDA 12 runtime/cuBLAS/cuDNN and ensure those DLL directories are in `PATH`.
+Expected CUDA-capable output includes `ctranslate2CudaAvailable: true`, `ctranslate2CudaSmokeOk: true`, and a positive `ctranslate2CudaDeviceCount`. If CUDA mode reports missing DLLs, use the app's CUDA install/repair button or install NVIDIA CUDA 12 runtime/cuBLAS/cuDNN system-wide and ensure those DLL directories are in `PATH`.
 
 ## Packaging
 

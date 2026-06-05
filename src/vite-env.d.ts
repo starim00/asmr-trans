@@ -16,9 +16,20 @@ type ModelStatus = {
 type HardwareStatus = {
   ctranslate2CudaAvailable?: boolean;
   ctranslate2CudaDeviceCount?: number;
+  ctranslate2CudaSmokeOk?: boolean;
+  ctranslate2SupportedCudaComputeTypes?: string[];
   cudaAvailable: boolean;
   cudaDeviceCount: number;
   cudaDeviceName?: string | null;
+  cudaRuntime?: {
+    source?: "system" | "python-wheel" | "missing" | "failed" | string;
+    dllDirectories?: string[];
+    cublasFound?: boolean;
+    cudnnFound?: boolean;
+    cublas64_12?: string | null;
+    cudnnDlls?: string[];
+  };
+  diagnostics?: unknown;
   error?: string;
 };
 
@@ -181,6 +192,7 @@ interface Window {
     failNextHistoryUpsertForSmoke?: () => boolean;
     retryDependencies: () => Promise<{ ok: boolean }>;
     installTtsDependencies: () => Promise<{ ok: boolean }>;
+    installCudaDependencies: () => Promise<{ ok: boolean; status?: HardwareStatus }>;
     cancelTranscription: () => Promise<{ canceled: boolean }>;
     startTranslation: (payload: {
       taskId: string;

@@ -11,6 +11,7 @@ const api = {
   deleteHistory: (id) => ipcRenderer.invoke("history:delete", id),
   retryDependencies: () => ipcRenderer.invoke("deps:retry"),
   installTtsDependencies: () => ipcRenderer.invoke("tts:install-deps"),
+  installCudaDependencies: () => ipcRenderer.invoke("cuda:install-deps"),
   startTranscription: (payload) => ipcRenderer.invoke("transcribe:start", payload),
   cancelTranscription: () => ipcRenderer.invoke("transcribe:cancel"),
   startTranslation: (payload) => ipcRenderer.invoke("translate:start", payload),

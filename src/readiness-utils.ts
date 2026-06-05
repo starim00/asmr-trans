@@ -26,6 +26,7 @@ export type ReadinessModelStatus = {
 
 export type ReadinessHardwareStatus = {
   ctranslate2CudaAvailable?: boolean;
+  ctranslate2CudaSmokeOk?: boolean;
   error?: string;
 } | null;
 
@@ -80,7 +81,9 @@ export function getReadinessChecks({
     });
   }
 
-  if (computeDevice === "cuda" && hardwareStatus && !hardwareStatus.ctranslate2CudaAvailable) {
+  const cudaReady = Boolean(hardwareStatus?.ctranslate2CudaSmokeOk ?? hardwareStatus?.ctranslate2CudaAvailable);
+
+  if (computeDevice === "cuda" && hardwareStatus && !cudaReady) {
     checks.push({
       key: "gpu",
       label: text.readinessGpuUnavailable,
@@ -98,7 +101,7 @@ export function getReadinessChecks({
     });
   }
 
-  if (computeDevice === "auto" && hardwareStatus && !hardwareStatus.ctranslate2CudaAvailable) {
+  if (computeDevice === "auto" && hardwareStatus && !cudaReady) {
     checks.push({
       key: "cpu-fallback",
       label: text.readinessCpuFallback,

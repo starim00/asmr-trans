@@ -24,7 +24,7 @@ function checks(overrides = {}) {
     tasks: [],
     settings: settings(),
     modelStatus: { whisperDownloaded: true },
-    hardwareStatus: { ctranslate2CudaAvailable: true },
+    hardwareStatus: { ctranslate2CudaAvailable: true, ctranslate2CudaSmokeOk: true },
     computeDevice: "auto",
     text,
     ...overrides,
@@ -67,15 +67,23 @@ assert.deepEqual(
 assert.deepEqual(
   checks({
     computeDevice: "cuda",
-    hardwareStatus: { ctranslate2CudaAvailable: false, error: "missing cublas" },
+    hardwareStatus: { ctranslate2CudaAvailable: true, ctranslate2CudaSmokeOk: false, error: "missing cublas" },
   }).blocking.map((check) => [check.key, check.message]),
   [["gpu", "missing cublas"]],
 );
 
 assert.deepEqual(
   checks({
+    computeDevice: "cuda",
+    hardwareStatus: { ctranslate2CudaAvailable: true, ctranslate2CudaSmokeOk: true },
+  }).blocking,
+  [],
+);
+
+assert.deepEqual(
+  checks({
     computeDevice: "auto",
-    hardwareStatus: { ctranslate2CudaAvailable: false },
+    hardwareStatus: { ctranslate2CudaAvailable: true, ctranslate2CudaSmokeOk: false },
   }).warnings.map((check) => check.key),
   ["cpu-fallback"],
 );

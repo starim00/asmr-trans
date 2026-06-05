@@ -276,6 +276,13 @@ const text = {
   retryingDependencies: "\u6b63\u5728\u91cd\u8bd5\u4f9d\u8d56\u5b89\u88c5...",
   installTtsDependencies: "\u5b89\u88c5/\u4fee\u590d VoxCPM2 \u4f9d\u8d56",
   installingTtsDependencies: "\u6b63\u5728\u5b89\u88c5/\u4fee\u590d VoxCPM2 \u4f9d\u8d56...",
+  installCudaDependencies: "\u5b89\u88c5/\u4fee\u590d CUDA \u4f9d\u8d56",
+  repairCudaDependencies: "\u4fee\u590d\u5e94\u7528\u5185 CUDA \u4f9d\u8d56",
+  installingCudaDependencies: "\u6b63\u5728\u5b89\u88c5/\u4fee\u590d CUDA \u4f9d\u8d56...",
+  cudaRuntimeSystem: "\u6b63\u5728\u4f7f\u7528\u7cfb\u7edf CUDA",
+  cudaRuntimeWheel: "\u6b63\u5728\u4f7f\u7528\u5e94\u7528\u5185 CUDA \u8fd0\u884c\u65f6",
+  cudaRuntimeMissing: "CUDA \u8fd0\u884c\u65f6\u7f3a\u5931",
+  cudaRuntimeFailed: "CUDA \u68c0\u6d4b\u5931\u8d25",
   unsavedSettings: "有未保存的配置",
   runtimeSettingsSaved: "模型和设备会立即保存",
   saveSettingsHint: "保存 AI、代理、音频增强、语音生成和导出配置",
@@ -350,6 +357,7 @@ const missingDesktopApi = {
   getSmokeTasks: () => [],
   retryDependencies: async () => ({ ok: false }),
   installTtsDependencies: async () => ({ ok: false }),
+  installCudaDependencies: async () => ({ ok: false, status: undefined }),
   cancelTranscription: async () => ({ canceled: false }),
   startTranslation: async () => {
     throw new Error("\u8bf7\u5728 Electron \u684c\u9762\u5ba2\u6237\u7aef\u4e2d\u542f\u52a8\u7ffb\u8bd1\u3002");
@@ -416,10 +424,22 @@ function exportModeLabel(mode: ExportContentMode) {
 
 function hardwareSummary(status: HardwareStatus | null) {
   if (!status) return text.loadingHardware;
-  const whisperGpu = status.ctranslate2CudaAvailable
+  const whisperGpu = (status.ctranslate2CudaSmokeOk ?? status.ctranslate2CudaAvailable)
     ? `${text.whisperGpuAvailable} (${status.ctranslate2CudaDeviceCount || 1} ${text.cudaDevices})`
     : text.whisperGpuUnavailable;
-  return whisperGpu;
+  const source = status.cudaRuntime?.source;
+  const runtime =
+    source === "system"
+      ? text.cudaRuntimeSystem
+      : source === "python-wheel"
+        ? text.cudaRuntimeWheel
+        : source === "missing"
+          ? text.cudaRuntimeMissing
+          : source === "failed"
+            ? text.cudaRuntimeFailed
+            : "";
+  const details = status.error ? ` - ${status.error}` : "";
+  return runtime ? `${whisperGpu} - ${runtime}${details}` : `${whisperGpu}${details}`;
 }
 
 function mergeSettings(settings?: Partial<AppSettings> | null): AppSettings {
@@ -664,6 +684,7 @@ function App() {
   const [settings, setSettings] = useState<AppSettings>(DEEPSEEK_PRESET);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [settingsDirty, setSettingsDirty] = useState(false);
+  const [isCudaInstalling, setIsCudaInstalling] = useState(false);
   const [isQueueRunning, setIsQueueRunning] = useState(false);
   const [isQueuePaused, setIsQueuePaused] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1543,6 +1564,29 @@ function App() {
     }
   }
 
+  async function installCudaDependencies() {
+    setError(null);
+    setIsCudaInstalling(true);
+    setGlobalProgress({ stage: "cuda-dependencies", message: text.installingCudaDependencies, percent: 1 });
+    try {
+      await desktopApi.updateSettings(mergeSettings({ ...settings, whisperModel, computeDevice }));
+      const result = await desktopApi.installCudaDependencies();
+      if (result.status) {
+        setHardwareStatus(result.status);
+      } else {
+        const refreshed = await desktopApi.getHardwareStatus();
+        setHardwareStatus(refreshed);
+      }
+      setGlobalProgress({ stage: "cuda-dependencies", message: "CUDA \u4f9d\u8d56\u5df2\u5c31\u7eea\u3002", percent: 100 });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setGlobalProgress({ stage: "cuda-dependencies", message, percent: 0 });
+      setError(message);
+    } finally {
+      setIsCudaInstalling(false);
+    }
+  }
+
   async function persistRuntimeSettings(patch: Partial<AppSettings>) {
     const nextSettings = mergeSettings({
       ...settings,
@@ -1742,11 +1786,11 @@ function App() {
         </div>
         <div className="commandArea">
           <div className="toolbarActions primaryActions">
-            <button className="secondaryButton" onClick={selectMedia} disabled={isQueueRunning}>
+            <button className="secondaryButton" onClick={selectMedia} disabled={isQueueRunning || isCudaInstalling}>
               <FolderOpen size={18} />
               {text.selectMedia}
             </button>
-            <button className="primaryButton toolbarPrimary" onClick={startQueue} disabled={isQueueRunning}>
+            <button className="primaryButton toolbarPrimary" onClick={startQueue} disabled={isQueueRunning || isCudaInstalling}>
               {isQueueRunning ? <Loader2 className="spin" size={18} /> : <Play size={18} />}
               {text.startQueue}
             </button>
@@ -2160,7 +2204,7 @@ function App() {
       <SettingsDrawer
         open={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        isRunning={isQueueRunning || Boolean(ttsTaskId)}
+        isRunning={isQueueRunning || Boolean(ttsTaskId) || isCudaInstalling}
         modelStatus={modelStatus}
         hardwareStatus={hardwareStatus}
         whisperModel={whisperModel}
@@ -2183,6 +2227,8 @@ function App() {
         saveSettings={saveSettings}
         retryDependencies={retryDependencies}
         installTtsDependencies={installTtsDependencies}
+        installCudaDependencies={installCudaDependencies}
+        isCudaInstalling={isCudaInstalling}
         settingsSaved={settingsSaved}
         settingsDirty={settingsDirty}
       />
@@ -2210,6 +2256,8 @@ function SettingsDrawer({
   saveSettings,
   retryDependencies,
   installTtsDependencies,
+  installCudaDependencies,
+  isCudaInstalling,
   settingsSaved,
   settingsDirty,
 }: {
@@ -2232,6 +2280,8 @@ function SettingsDrawer({
   saveSettings: () => void;
   retryDependencies: () => void;
   installTtsDependencies: () => void;
+  installCudaDependencies: () => void;
+  isCudaInstalling: boolean;
   settingsSaved: boolean;
   settingsDirty: boolean;
 }) {
@@ -2640,6 +2690,12 @@ function SettingsDrawer({
                 ))}
               </div>
               <p className="hint multiline">{hardwareSummary(hardwareStatus)}</p>
+              {computeDevice !== "cpu" && (
+                <button className="secondaryButton compactButton" onClick={installCudaDependencies} disabled={isRunning || isCudaInstalling}>
+                  <RotateCcw size={16} />
+                  {hardwareStatus?.cudaRuntime?.source === "system" ? text.repairCudaDependencies : text.installCudaDependencies}
+                </button>
+              )}
             </div>
 
             <div className="statusBlock">

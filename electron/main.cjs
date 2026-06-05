@@ -31,10 +31,16 @@ let activeTtsWorkerCancelRequested = false;
 const activeTranslationWorkers = new Map();
 let dependencyInstallPromise = null;
 let ttsDependencyInstallPromise = null;
+let cudaDependencyInstallPromise = null;
 let windowStateSaveTimer = null;
 let failNextHistoryUpsertForSmoke = false;
 let smokeTranscriptionRunning = false;
 const smokeTranscriptionStartsByPath = new Map();
+const CUDA_RUNTIME_PACKAGES = [
+  "nvidia-cuda-runtime-cu12",
+  "nvidia-cublas-cu12",
+  "nvidia-cudnn-cu12",
+];
 
 function getModelsDir() {
   return path.join(app.getPath("userData"), "models");
@@ -228,9 +234,9 @@ function getWorkerPath() {
 
 function getRequirementsPath() {
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, "python", "requirements-cuda.txt");
+    return path.join(process.resourcesPath, "python", "requirements.txt");
   }
-  return path.join(__dirname, "..", "python", "requirements-cuda.txt");
+  return path.join(__dirname, "..", "python", "requirements.txt");
 }
 
 function getTtsRequirementsPath() {
@@ -249,13 +255,15 @@ function getPackagedPythonExecutable() {
   return fs.existsSync(runtimePath) ? runtimePath : null;
 }
 
-function getPythonCommand(extraArgs = []) {
+function getPythonRuntimeCommand(extraArgs = []) {
   const packagedPython = getPackagedPythonExecutable();
   const executable = process.env.ASMR_TRANS_PYTHON || packagedPython || (process.platform === "win32" ? "py" : "python3");
-  const args = process.platform === "win32" && !process.env.ASMR_TRANS_PYTHON && !packagedPython
-    ? ["-3", getWorkerPath(), ...extraArgs]
-    : [getWorkerPath(), ...extraArgs];
+  const args = process.platform === "win32" && !process.env.ASMR_TRANS_PYTHON && !packagedPython ? ["-3", ...extraArgs] : extraArgs;
   return { executable, args };
+}
+
+function getPythonCommand(extraArgs = []) {
+  return getPythonRuntimeCommand([getWorkerPath(), ...extraArgs]);
 }
 
 function getConfiguredProxyUrl() {
@@ -272,7 +280,68 @@ function getConfiguredProxyUrl() {
   return `${type}://${host}:${port}`;
 }
 
-function getWorkerEnv() {
+function getCudaWheelDllDirectories(env = process.env) {
+  const script = [
+    "import importlib.util, json, site, sys",
+    "from pathlib import Path",
+    "roots = []",
+    "for name in ('nvidia.cublas', 'nvidia.cudnn', 'nvidia.cuda_runtime'):",
+    "    spec = importlib.util.find_spec(name)",
+    "    if spec and spec.submodule_search_locations:",
+    "        roots.extend(str(Path(item)) for item in spec.submodule_search_locations)",
+    "for getter in (getattr(site, 'getsitepackages', lambda: []),):",
+    "    try:",
+    "        roots.extend(str(Path(item) / 'nvidia') for item in getter())",
+    "    except Exception:",
+    "        pass",
+    "try:",
+    "    roots.append(str(Path(site.getusersitepackages()) / 'nvidia'))",
+    "except Exception:",
+    "    pass",
+    "dirs = []",
+    "for root in roots:",
+    "    path = Path(root)",
+    "    if not path.exists():",
+    "        continue",
+    "    for candidate in [path, path / 'bin', path / 'lib']:",
+    "        if candidate.exists() and any(candidate.glob('*.dll')):",
+    "            dirs.append(str(candidate))",
+    "    for candidate in list(path.rglob('bin')) + list(path.rglob('lib')):",
+    "        if candidate.exists() and any(candidate.glob('*.dll')):",
+    "            dirs.append(str(candidate))",
+    "print(json.dumps(sorted(set(dirs))))",
+  ].join("\n");
+  const command = getPythonRuntimeCommand(["-c", script]);
+  const result = spawnSync(command.executable, command.args, {
+    encoding: "utf8",
+    windowsHide: true,
+    env,
+  });
+  if (result.status !== 0 || result.error) {
+    return [];
+  }
+  try {
+    return JSON.parse(result.stdout.trim()).filter((item) => typeof item === "string" && item);
+  } catch (_error) {
+    return [];
+  }
+}
+
+function appendPathEntries(env, entries) {
+  const validEntries = [...new Set((entries || []).filter((entry) => entry && fs.existsSync(entry)))];
+  if (!validEntries.length) {
+    return env;
+  }
+  const currentPath = env.PATH || env.Path || "";
+  const nextPath = `${currentPath}${currentPath ? path.delimiter : ""}${validEntries.join(path.delimiter)}`;
+  return {
+    ...env,
+    PATH: nextPath,
+    Path: nextPath,
+  };
+}
+
+function getWorkerEnv(options = {}) {
   const env = {
     ...process.env,
     HF_HUB_ENABLE_HF_TRANSFER: process.env.HF_HUB_ENABLE_HF_TRANSFER || "0",
@@ -290,6 +359,10 @@ function getWorkerEnv() {
     env.http_proxy = configuredProxy;
     env.https_proxy = configuredProxy;
     env.all_proxy = configuredProxy;
+  }
+  if (options.includeCudaWheelPaths !== false) {
+    const cudaDllDirectories = getCudaWheelDllDirectories(env);
+    return appendPathEntries(env, cudaDllDirectories);
   }
   return env;
 }
@@ -370,6 +443,60 @@ function getPipInstallAttempts(requirementsPath, extraArgs = []) {
   if (extraArgs.length) {
     attempts[0] = { label: attempts[0].label, args: ["-m", "pip", "install", "--disable-pip-version-check", ...extraArgs, "-r", requirementsPath] };
   }
+  return attempts;
+}
+
+function getPipPackageInstallAttempts(packages, extraArgs = []) {
+  const commonArgs = ["-m", "pip", "install", "--disable-pip-version-check", ...extraArgs, ...packages];
+  const attempts = [{ label: "Default PyPI", args: commonArgs }];
+  const customIndex = (process.env.ASMR_TRANS_PIP_INDEX_URL || "").trim();
+  if (customIndex) {
+    attempts.unshift({
+      label: "Custom Python package index",
+      args: [
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        ...extraArgs,
+        "--index-url",
+        customIndex,
+        ...packages,
+      ],
+    });
+  }
+  attempts.push(
+    {
+      label: "Aliyun PyPI mirror",
+      args: [
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        ...extraArgs,
+        "--index-url",
+        "https://mirrors.aliyun.com/pypi/simple/",
+        "--trusted-host",
+        "mirrors.aliyun.com",
+        ...packages,
+      ],
+    },
+    {
+      label: "Tsinghua PyPI mirror",
+      args: [
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        ...extraArgs,
+        "--index-url",
+        "https://pypi.tuna.tsinghua.edu.cn/simple/",
+        "--trusted-host",
+        "pypi.tuna.tsinghua.edu.cn",
+        ...packages,
+      ],
+    },
+  );
   return attempts;
 }
 
@@ -458,6 +585,11 @@ function ensurePythonDependencies() {
   return dependencyInstallPromise;
 }
 
+function runGenericPipInstallAttempt(attempt, attemptIndex, attemptCount, progress, noun) {
+  const command = getPipCommandForAttempt(attempt);
+  return runPipInstallAttempt(command.executable, { ...attempt, args: command.args }, attemptIndex, attemptCount, progress, noun);
+}
+
 function getPipCommandForAttempt(attempt) {
   const packagedPython = getPackagedPythonExecutable();
   if (packagedPython) {
@@ -473,8 +605,7 @@ function getPipCommandForAttempt(attempt) {
 }
 
 function runTtsPipInstallAttempt(attempt, attemptIndex, attemptCount, progress) {
-  const command = getPipCommandForAttempt(attempt);
-  return runPipInstallAttempt(command.executable, { ...attempt, args: command.args }, attemptIndex, attemptCount, progress, "VoxCPM2 dependencies");
+  return runGenericPipInstallAttempt(attempt, attemptIndex, attemptCount, progress, "VoxCPM2 dependencies");
 }
 
 function installVoxCpmPackageNoDeps(progress) {
@@ -545,6 +676,58 @@ function ensureTtsDependencies(event, taskId = null) {
   });
 
   return ttsDependencyInstallPromise;
+}
+
+function ensureCudaDependencies(event) {
+  if (cudaDependencyInstallPromise) {
+    return cudaDependencyInstallPromise;
+  }
+
+  const progress = (message, percent = 0) => {
+    event.sender.send("deps:progress", {
+      stage: "cuda-dependencies",
+      message,
+      percent,
+    });
+  };
+
+  cudaDependencyInstallPromise = (async () => {
+    progress("Checking CUDA runtime dependencies...", 2);
+    const attempts = getPipPackageInstallAttempts(CUDA_RUNTIME_PACKAGES, [
+      "--extra-index-url",
+      "https://pypi.nvidia.com",
+      "--trusted-host",
+      "pypi.nvidia.com",
+    ]);
+    let lastOutput = "";
+    let installed = false;
+    for (let index = 0; index < attempts.length; index += 1) {
+      try {
+        await runGenericPipInstallAttempt(attempts[index], index, attempts.length, progress, "CUDA runtime dependencies");
+        installed = true;
+        break;
+      } catch (error) {
+        lastOutput = error.output || error.message || "";
+        if (index < attempts.length - 1) {
+          progress(`CUDA dependency source failed, switching to: ${attempts[index + 1].label}`, 12);
+        }
+      }
+    }
+    if (!installed) {
+      throw new Error(`CUDA dependency installation failed after trying PyPI and mirrors. ${lastOutput.slice(-1000)}`);
+    }
+    progress("CUDA runtime dependencies installed.", 88);
+    const status = getHardwareStatusWithCudaPriority();
+    if (!status.ctranslate2CudaSmokeOk) {
+      throw new Error(status.error || "CUDA dependencies installed, but CTranslate2 CUDA smoke check still failed.");
+    }
+    progress("CUDA runtime is ready.", 100);
+    return status;
+  })().finally(() => {
+    cudaDependencyInstallPromise = null;
+  });
+
+  return cudaDependencyInstallPromise;
 }
 
 function createWindow() {
@@ -667,7 +850,7 @@ async function runSmokeTest() {
   }
 
   const preloadReady = await mainWindow.webContents.executeJavaScript(
-    "Boolean(window.asmrTrans && window.asmrTrans.getSettings && window.asmrTrans.getHistory && window.asmrTrans.deleteHistory)",
+    "Boolean(window.asmrTrans && window.asmrTrans.getSettings && window.asmrTrans.getHistory && window.asmrTrans.deleteHistory && window.asmrTrans.installCudaDependencies)",
   );
   if (!preloadReady) {
     throw new Error("Smoke test failed: preload API is not available.");
@@ -1313,19 +1496,26 @@ ipcMain.handle("models:status", async () => {
   };
 });
 
-ipcMain.handle("hardware:status", async () => {
+function runHardwareStatus(env, source) {
   const { executable, args } = getPythonCommand(["--hardware"]);
   const result = spawnSync(executable, args, {
     encoding: "utf8",
     windowsHide: true,
-    env: getWorkerEnv(),
+    env: {
+      ...env,
+      ASMR_TRANS_CUDA_RUNTIME_SOURCE: source,
+    },
   });
 
   if (result.error) {
     return {
+      ctranslate2CudaAvailable: false,
+      ctranslate2CudaDeviceCount: 0,
+      ctranslate2CudaSmokeOk: false,
       cudaAvailable: false,
       cudaDeviceCount: 0,
       cudaDeviceName: null,
+      cudaRuntime: { source: "failed", dllDirectories: [] },
       error: result.error.message,
     };
   }
@@ -1334,12 +1524,63 @@ ipcMain.handle("hardware:status", async () => {
     return JSON.parse(result.stdout.trim());
   } catch (_error) {
     return {
+      ctranslate2CudaAvailable: false,
+      ctranslate2CudaDeviceCount: 0,
+      ctranslate2CudaSmokeOk: false,
       cudaAvailable: false,
       cudaDeviceCount: 0,
       cudaDeviceName: null,
+      cudaRuntime: { source: "failed", dllDirectories: [] },
       error: result.stderr.trim() || "Unable to read hardware status.",
     };
   }
+}
+
+function getHardwareStatusWithCudaPriority() {
+  const systemEnv = getWorkerEnv({ includeCudaWheelPaths: false });
+  const systemStatus = runHardwareStatus(systemEnv, "system");
+  if (systemStatus.ctranslate2CudaSmokeOk) {
+    return systemStatus;
+  }
+
+  const cudaDllDirectories = getCudaWheelDllDirectories(systemEnv);
+  if (!cudaDllDirectories.length) {
+    return {
+      ...systemStatus,
+      ctranslate2CudaAvailable: false,
+      ctranslate2CudaSmokeOk: false,
+      cudaAvailable: false,
+      cudaRuntime: {
+        ...(systemStatus.cudaRuntime || {}),
+        source: systemStatus.cudaDeviceCount > 0 ? "missing" : "failed",
+        dllDirectories: [],
+      },
+      error: systemStatus.error || (systemStatus.cudaDeviceCount > 0 ? "CUDA runtime DLLs are missing." : "No CUDA GPU was detected."),
+    };
+  }
+
+  const wheelStatus = runHardwareStatus(appendPathEntries(systemEnv, cudaDllDirectories), "python-wheel");
+  if (wheelStatus.ctranslate2CudaSmokeOk) {
+    return wheelStatus;
+  }
+
+  return {
+    ...wheelStatus,
+    cudaRuntime: {
+      ...(wheelStatus.cudaRuntime || {}),
+      source: wheelStatus.cudaDeviceCount > 0 ? "failed" : "missing",
+      dllDirectories: cudaDllDirectories,
+    },
+    error: wheelStatus.error || systemStatus.error || "CUDA runtime was detected, but CTranslate2 CUDA smoke check failed.",
+    diagnostics: {
+      system: systemStatus,
+      pythonWheel: wheelStatus,
+    },
+  };
+}
+
+ipcMain.handle("hardware:status", async () => {
+  return getHardwareStatusWithCudaPriority();
 });
 
 ipcMain.handle("settings:get", async () => {
@@ -1376,6 +1617,12 @@ ipcMain.handle("tts:install-deps", async (event) => {
   ttsDependencyInstallPromise = null;
   await ensureTtsDependencies(event);
   return { ok: true };
+});
+
+ipcMain.handle("cuda:install-deps", async (event) => {
+  cudaDependencyInstallPromise = null;
+  const status = await ensureCudaDependencies(event);
+  return { ok: true, status };
 });
 
 ipcMain.handle("transcribe:start", async (event, payload) => {
